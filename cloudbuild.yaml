@@ -31,8 +31,6 @@ steps:
       - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:$COMMIT_SHA'
       - '--region'
       - '${_LOCATION}'
-      - '--platform'
-      - 'managed'
       - '--allow-unauthenticated'
       - '--port'
       - '3000'
