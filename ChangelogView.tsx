@@ -1,5 +1,0 @@
-0000000000000000000000000000000000000000 130a963f92521ae220b3e116e0d0d632fc611e3a AI Studio <app@aistudio.internal> 1784943269 +0000	commit (initial): Initial commit of application code
-130a963f92521ae220b3e116e0d0d632fc611e3a 0000000000000000000000000000000000000000 AI Studio <app@aistudio.internal> 1784943441 +0000	Branch: renamed refs/heads/master to refs/heads/main
-0000000000000000000000000000000000000000 130a963f92521ae220b3e116e0d0d632fc611e3a AI Studio <app@aistudio.internal> 1784943441 +0000	Branch: renamed refs/heads/master to refs/heads/main
-130a963f92521ae220b3e116e0d0d632fc611e3a 0000000000000000000000000000000000000000 AI Studio <app@aistudio.internal> 1784944177 +0000
-0000000000000000000000000000000000000000 7feeab976ec17f2df88cfb04e76b6f34f4d064d8 AI Studio <app@aistudio.internal> 1784944302 +0000	commit (initial): Initial commit of application code
