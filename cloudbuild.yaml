@@ -1,34 +1,38 @@
 steps:
   # 1. Build Docker image
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:$COMMIT_SHA'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:latest'
+      - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:latest'
       - '.'
 
-  # 2. Push image to Container Registry
+  # 2. Push image tags to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-sha-tag'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:$COMMIT_SHA'
 
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-latest-tag'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:latest'
+      - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:latest'
 
   # 3. Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-to-cloud-run'
     entrypoint: gcloud
     args:
       - 'run'
       - 'deploy'
       - '${_SERVICE_NAME}'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:$COMMIT_SHA'
       - '--region'
       - '${_LOCATION}'
       - '--allow-unauthenticated'
@@ -36,13 +40,13 @@ steps:
       - '3000'
 
 substitutions:
+  _REPO_NAME: 'uad36-wiki'
   _SERVICE_NAME: 'uad36-wiki'
   _LOCATION: 'us-central1'
 
 images:
-  - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:$COMMIT_SHA'
-  - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:latest'
+  - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/${_REPO_NAME}:latest'
 
-# ADD THIS SECTION TO FIX THE LOGGING ISSUE:
 options:
   logging: CLOUD_LOGGING_ONLY
