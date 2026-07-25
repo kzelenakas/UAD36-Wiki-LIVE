@@ -42,3 +42,7 @@ substitutions:
 images:
   - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:$COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/${REPO_NAME:-uad36-wiki}:latest'
+
+# ADD THIS SECTION TO FIX THE LOGGING ISSUE:
+options:
+  logging: CLOUD_LOGGING_ONLY
