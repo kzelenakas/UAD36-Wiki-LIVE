@@ -53,10 +53,6 @@ steps:
       # Restores Drive connection and removes Gemini Key
       - '--set-env-vars'
       - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F'
-      # This removes the existing GEMINI_API_KEY if it was previously set
-      - '--remove-env-vars'
-      - 'GEMINI_API_KEY'
-
 
 substitutions:
   _REPO_NAME: 'uad36-wiki'
