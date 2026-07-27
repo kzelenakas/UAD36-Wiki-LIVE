@@ -1,4 +1,4 @@
-# UAD 3.6 Knowledge Wiki
+# UAD 3.6 Knowledge Wiki 
 
 Interactive knowledge wiki for the UAD 3.6 rollout to True Footage's nationwide
 staff appraisers — Google Drive-backed resources, an FAQ/QDT review queue, and
@@ -8,7 +8,7 @@ Stack: Vite + React 19 + Express (single Node server serves the API and the
 built SPA), Firebase Auth (Google sign-in, for Drive/Docs API scopes) and the
 Gemini API (`@google/genai`).
 
-## Run locally
+## Run locally 
 
 **Prerequisites:** Node.js 20+
 
