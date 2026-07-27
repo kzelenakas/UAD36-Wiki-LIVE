@@ -37,7 +37,6 @@ steps:
       - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_REPO_NAME}:$COMMIT_SHA'
       - '--region'
       - '${_LOCATION}'
-      # Cloud Run's default PORT (8080) matches server.ts now; no --port override needed.
       - '--allow-unauthenticated'
       - '--memory'
       - '512Mi'
@@ -51,10 +50,11 @@ steps:
       - '4'
       - '--timeout'
       - '60'
-      # GEMINI_API_KEY is pulled from Secret Manager, never baked into the image.
-      # Prereq: `gcloud secrets create GEMINI_API_KEY --data-file=-` and grant the
-      # Cloud Run runtime service account roles/secretmanager.secretAccessor.
+      # Restores Drive connection and removes Gemini Key
       - '--set-env-vars'
+      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F'
+      # This removes the existing GEMINI_API_KEY if it was previously set
+      - '--update-env-vars'
       - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN}'
 
 substitutions:
