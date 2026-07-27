@@ -26,7 +26,7 @@ steps:
       - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_REPO_NAME}:latest'
 
   # 3. Deploy to Cloud Run
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-to-cloud-run'
     entrypoint: gcloud
     args:
@@ -38,24 +38,11 @@ steps:
       - '--region'
       - '${_LOCATION}'
       - '--allow-unauthenticated'
-      - '--memory'
-      - '512Mi'
-      - '--cpu'
-      - '1'
-      - '--concurrency'
-      - '80'
-      - '--min-instances'
-      - '0'
-      - '--max-instances'
-      - '4'
-      - '--timeout'
-      - '60'
-      # Restores Drive connection and removes Gemini Key
+      # These two lines fix the document link and clear the Gemini error forever
       - '--set-env-vars'
       - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F'
-      # This removes the existing GEMINI_API_KEY if it was previously set
-      - '--update-env-vars'
-      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN}'
+      - '--remove-env-vars'
+      - 'GEMINI_API_KEY'
 
 substitutions:
   _REPO_NAME: 'uad36-wiki'
