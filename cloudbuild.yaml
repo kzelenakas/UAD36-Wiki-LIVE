@@ -54,8 +54,6 @@ steps:
       # GEMINI_API_KEY is pulled from Secret Manager, never baked into the image.
       # Prereq: `gcloud secrets create GEMINI_API_KEY --data-file=-` and grant the
       # Cloud Run runtime service account roles/secretmanager.secretAccessor.
-      - '--set-secrets'
-      - 'GEMINI_API_KEY=GEMINI_API_KEY:latest'
       - '--set-env-vars'
       - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN}'
 
