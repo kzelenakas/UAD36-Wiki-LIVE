@@ -1,4 +1,4 @@
-# UAD 3.6 Knowledge Wiki 
+# UAD 3.6 Knowledge Wiki
 
 Interactive knowledge wiki for the UAD 3.6 rollout to True Footage's nationwide
 staff appraisers — Google Drive-backed resources, an FAQ/QDT review queue, and
