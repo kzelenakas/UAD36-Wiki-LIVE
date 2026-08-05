@@ -19,7 +19,11 @@ export async function getAdmin(): Promise<any | null> {
   if (initTried) return initOk ? adminModule : null;
   initTried = true;
   try {
-    const admin = await import('firebase-admin');
+    const mod: any = await import('firebase-admin');
+    // firebase-admin is a CommonJS module; when bundled to CJS by esbuild the
+    // real export is exposed on `.default`. Resolve both shapes so
+    // initializeApp/auth/firestore are always available.
+    const admin = mod.default ?? mod;
     if (!admin.apps || admin.apps.length === 0) {
       const projectId =
         process.env.FIREBASE_PROJECT_ID ||
