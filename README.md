@@ -17,7 +17,7 @@ Gemini API (`@google/genai`).
    other values if you're using Drive sync / NotebookLM).
 3. `npm run dev`
 
-## Deploy to Google Cloud Run
+## Deploy to Google Cloud Run 
 
 Deploy config lives in [`Dockerfile`](Dockerfile) and
 [`cloudbuild.yaml`](cloudbuild.yaml). One-time setup:
