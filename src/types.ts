@@ -115,6 +115,35 @@ export interface WikiSection {
   description: string;
 }
 
+/**
+ * A single logged entry from the TFAN AI chat. Every question a user submits to
+ * the TFAN assistant is recorded here so admins can review what the team is
+ * asking (Admin > TFAN Log queue, and the linked Google Sheet export).
+ */
+export interface TfanChatLog {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName: string;
+  question: string;
+  /** The wiki section the user chose to include, or "General" if the
+   *  "Include section context" checkbox was not selected. */
+  section: string;
+  includeSection: boolean;
+  answerPreview?: string;
+  timestamp: string; // ISO string
+}
+
+export interface SystemConfig {
+  driveFolderId: string;
+  driveFolderName: string;
+  notebookLmUrl: string;
+  /** ID + URL of the linked Google Sheet that mirrors FAQ + TFAN logs (#8). */
+  logSheetId?: string;
+  logSheetUrl?: string;
+  logSheetUpdatedAt?: string;
+}
+
 // Wiki Sections list for the UAD 3.6 standards
 export const DEFAULT_WIKI_SECTIONS: WikiSection[] = [
   {

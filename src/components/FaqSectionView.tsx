@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { FAQSection, FAQEntry, SubmittedQuestion, UserProfile, WikiSection } from '../types';
-import { 
-  MessageSquare, 
+import React, { useState, useEffect } from 'react';
+import { FAQSection, FAQEntry, SubmittedQuestion, UserProfile, WikiSection, TfanChatLog } from '../types';
+import {
+  Bot,
+  MessageSquare,
   CheckCircle, 
   Clock, 
   EyeOff, 
@@ -43,7 +44,30 @@ export default function FaqSectionView({
   curriculumModules
 }: FaqSectionViewProps) {
   const [selectedSectionId, setSelectedSectionId] = useState<string>(sections[0]?.id || 'all');
-  const [activeTab, setActiveTab] = useState<'faqs' | 'submit-q' | 'review-queue'>('faqs');
+  const [activeTab, setActiveTab] = useState<'faqs' | 'submit-q' | 'review-queue' | 'tfan-log'>('faqs');
+
+  // TFAN chat log queue (admin, #7)
+  const [chatLogs, setChatLogs] = useState<TfanChatLog[]>([]);
+  const [chatLogsLoading, setChatLogsLoading] = useState(false);
+
+  const fetchChatLogs = async () => {
+    setChatLogsLoading(true);
+    try {
+      const res = await fetch('/api/admin/chat-logs');
+      const data = await res.json();
+      if (res.ok) setChatLogs(data.logs || []);
+    } catch (e) {
+      console.error('Error fetching TFAN logs:', e);
+    } finally {
+      setChatLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'tfan-log' && user.role === 'admin') {
+      fetchChatLogs();
+    }
+  }, [activeTab]);
   
   // Modals / forms
   const [showAddSection, setShowAddSection] = useState(false);
@@ -334,7 +358,89 @@ export default function FaqSectionView({
             </span>
           </button>
         )}
+        {user.role === 'admin' && (
+          <button
+            onClick={() => { setActiveTab('tfan-log'); setSubmittedStatusText(null); }}
+            className={`px-4 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'tfan-log' ? 'bg-emerald-800 text-white' : 'text-slate-600 hover:text-slate-800'
+            }`}
+            title="Review every question asked in the TFAN chat"
+          >
+            <Bot className="h-3.5 w-3.5" />
+            TFAN Log
+          </button>
+        )}
       </div>
+
+      {activeTab === 'tfan-log' && user.role === 'admin' && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <div className="flex items-center justify-between mb-3 border-b pb-2 border-slate-100">
+            <div className="flex items-center gap-2">
+              <Bot className="h-5 w-5 text-emerald-800" />
+              <h3 className="text-sm font-bold text-slate-800">TFAN Chat Log</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
+                {chatLogs.length} entries
+              </span>
+              <button
+                onClick={fetchChatLogs}
+                className="text-[10px] font-bold text-emerald-800 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-50 cursor-pointer"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            Every question asked in the TFAN assistant is logged here. The <span className="font-semibold">Linked Section</span> shows
+            the wiki section the user chose to include, or <span className="font-semibold">General</span> if they did not select one.
+          </p>
+
+          {chatLogsLoading ? (
+            <div className="text-center text-xs text-slate-400 py-12 font-mono">Loading TFAN log…</div>
+          ) : chatLogs.length === 0 ? (
+            <div className="text-center text-xs text-slate-400 py-12 font-mono">No TFAN chat questions logged yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                    <th className="py-2 pr-3 font-bold">When</th>
+                    <th className="py-2 pr-3 font-bold">User</th>
+                    <th className="py-2 pr-3 font-bold">Linked Section</th>
+                    <th className="py-2 pr-3 font-bold">Question</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {chatLogs.map((log) => (
+                    <tr key={log.id} className="align-top hover:bg-slate-50/60">
+                      <td className="py-2.5 pr-3 text-[10px] text-slate-400 font-mono whitespace-nowrap">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                      <td className="py-2.5 pr-3 whitespace-nowrap">
+                        <span className="font-semibold text-slate-700 block">{log.userName}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">{log.userEmail}</span>
+                      </td>
+                      <td className="py-2.5 pr-3 whitespace-nowrap">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          log.section === 'General'
+                            ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                            : 'bg-emerald-50 text-emerald-800 border border-emerald-100'
+                        }`}>
+                          {log.section}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-3 text-slate-700 leading-relaxed min-w-[220px]">
+                        {log.question}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {activeTab === 'faqs' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

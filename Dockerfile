@@ -32,9 +32,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy compiled application from builder
 COPY --from=builder /app/dist ./dist
-# No data-store.json here on purpose: server/db.ts seeds it with defaults on
-# first write. On Cloud Run this file lives on ephemeral, per-instance disk —
-# see README "Known limitation" before treating it as real persistence.
+# Persistence is Firestore on Cloud Run (auto-detected via ADC); the local
+# data-store.json is only a dev fallback. See docs/DEPLOYMENT_RUNBOOK.md.
 
 # Run as non-root (Cloud Run runs containers as an arbitrary UID by default,
 # but pinning a real user keeps local `docker run` and other platforms safe too)

@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { UserProfile, Resource, FAQSection, FAQEntry, SubmittedQuestion, AuditLog, WikiSection } from './types';
+import { installAuthFetch, subscribeAuth, signOutUser } from './lib/authClient';
 import AuthScreen from './components/AuthScreen.tsx';
 import ModuleBrowser from './components/ModuleBrowser.tsx';
 import ResourceViewer from './components/ResourceViewer.tsx';
@@ -15,11 +16,17 @@ import AiChatPanel from './components/AiChatPanel.tsx';
 import HomeLandingView from './components/HomeLandingView.tsx';
 import { ShieldCheck, BookOpen, HelpCircle, Sparkles, Settings, LogOut, Menu, X, Lock, Home } from 'lucide-react';
 
+// Attach the Firebase ID token to all /api requests, before any fetch runs.
+installAuthFetch();
+
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(() => {
     const saved = localStorage.getItem('true_footage_user');
     return saved ? JSON.parse(saved) : null;
   });
+  // Gate rendering until Firebase reports whether a live session exists, so a
+  // stale localStorage profile can't grant access after the session expires.
+  const [authReady, setAuthReady] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<'home' | 'modules' | 'faqs' | 'changelog' | 'admin'>('home');
   const [currentModule, setCurrentModule] = useState<string>('UAD 3.6 General Overview');
@@ -79,6 +86,20 @@ export default function App() {
     }
   }, [user]);
 
+  // Security: require a live Firebase session. If Firebase has no signed-in
+  // user (session expired / signed out elsewhere), drop the cached profile and
+  // force re-authentication.
+  useEffect(() => {
+    const unsub = subscribeAuth((fbUser) => {
+      if (!fbUser) {
+        setUser(null);
+        localStorage.removeItem('true_footage_user');
+      }
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, []);
+
   // Keep current module in sync if current list updates
   useEffect(() => {
     if (curriculumModules.length > 0) {
@@ -104,6 +125,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    signOutUser();
     setUser(null);
     localStorage.removeItem('true_footage_user');
     setSelectedResource(null);
@@ -132,6 +154,17 @@ export default function App() {
       alert(`Cited document ID '${id}' is currently offline in Drive directory.`);
     }
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-slate-500 text-sm font-medium">
+          <ShieldCheck className="h-5 w-5 text-emerald-700 animate-pulse" />
+          Verifying secure session…
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <AuthScreen onLoginSuccess={handleLogin} />;

@@ -1,27 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { AuditLog, Resource, FAQSection, WikiSection } from '../types';
+import { AuditLog, Resource, FAQSection, WikiSection, SystemConfig } from '../types';
 import { googleSignIn, getAccessToken, createDriveSectionSubfolders } from '../lib/googleDocsExport';
-import { 
-  Database, 
-  Plus, 
-  RefreshCw, 
-  Layers, 
-  FileText, 
-  Settings, 
-  AlertTriangle, 
-  ArrowUp, 
-  ArrowDown, 
-  Edit2, 
-  Trash2, 
-  Check, 
-  X, 
-  Sliders, 
-  ArrowUpDown, 
-  FolderSync, 
+import { scanResourceFolder, exportLogSheet } from '../lib/driveSync';
+import {
+  Database,
+  Plus,
+  RefreshCw,
+  Layers,
+  FileText,
+  Settings,
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Edit2,
+  Trash2,
+  Check,
+  X,
+  Sliders,
+  ArrowUpDown,
+  FolderSync,
   Link2,
   ListOrdered,
   FolderPlus,
-  ExternalLink
+  ExternalLink,
+  CloudDownload,
+  FileSpreadsheet,
+  Lock,
+  Unlock,
+  ShieldAlert
 } from 'lucide-react';
 
 interface AdminConsoleProps {
@@ -29,7 +35,7 @@ interface AdminConsoleProps {
   onRefreshData: () => void;
   userEmail: string;
   curriculumModules: (string | WikiSection)[];
-  systemConfig: { driveFolderId: string; driveFolderName: string; notebookLmUrl: string } | null;
+  systemConfig: SystemConfig | null;
   resources: Resource[];
   faqSections: FAQSection[];
 }
@@ -83,6 +89,154 @@ export default function AdminConsole({
   // Drive subfolders creation state
   const [creatingFolders, setCreatingFolders] = useState(false);
   const [folderResults, setFolderResults] = useState<{ folderName: string; folderId: string; created: boolean; error?: string }[] | null>(null);
+
+  // Live Google Drive sync state (#3)
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncIsError, setSyncIsError] = useState(false);
+
+  // Linked Google Sheet export state (#8)
+  const [sheetBusy, setSheetBusy] = useState(false);
+  const [sheetMessage, setSheetMessage] = useState<string | null>(null);
+  const [sheetIsError, setSheetIsError] = useState(false);
+
+  // Folder ID/Name protected-edit state (#6)
+  const [folderEditUnlocked, setFolderEditUnlocked] = useState(false);
+  const [showFolderWarning, setShowFolderWarning] = useState(false);
+
+  const sectionNames = curriculumModules.map(m => (typeof m === 'string' ? m : m.name));
+
+  // Ensure a Google access token, prompting sign-in if needed.
+  const ensureToken = async (): Promise<string | null> => {
+    let token = getAccessToken();
+    if (!token) {
+      const authRes = await googleSignIn();
+      token = authRes?.accessToken || null;
+    }
+    return token;
+  };
+
+  // Live sync: read the real Drive resource folder's section subfolders and
+  // index/refresh every file found (#1, #3, #4, #5).
+  const handleLiveSync = async () => {
+    setSyncing(true);
+    setSyncMessage(null);
+    setSyncIsError(false);
+    try {
+      if (!driveFolderId || !driveFolderId.trim()) {
+        throw new Error('Set the Google Drive Resource Folder ID in System Config first.');
+      }
+      const token = await ensureToken();
+      if (!token) {
+        setSyncing(false);
+        return; // user cancelled sign-in
+      }
+      const files = await scanResourceFolder(token, driveFolderId.trim(), sectionNames);
+      const res = await fetch('/api/sync/drive-index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sync failed');
+      setSyncMessage(
+        files.length === 0
+          ? 'No files found in the section subfolders. Add files to the Drive folders, then sync again.'
+          : `${data.message} (${files.length} file${files.length === 1 ? '' : 's'} scanned from Drive)`
+      );
+      onRefreshData();
+    } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user') {
+        // silently ignore cancelled sign-in
+      } else {
+        setSyncIsError(true);
+        setSyncMessage(err.message || String(err));
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Create/refresh the linked Google Sheet mirroring FAQ + TFAN logs (#8).
+  const handleExportSheet = async () => {
+    setSheetBusy(true);
+    setSheetMessage(null);
+    setSheetIsError(false);
+    try {
+      if (!driveFolderId || !driveFolderId.trim()) {
+        throw new Error('Set the Google Drive Resource Folder ID in System Config first.');
+      }
+      const token = await ensureToken();
+      if (!token) {
+        setSheetBusy(false);
+        return;
+      }
+
+      // Gather the data to mirror.
+      const [faqRes, chatRes] = await Promise.all([
+        fetch('/api/faq/entries').then(r => r.json()),
+        fetch('/api/admin/chat-logs').then(r => r.json())
+      ]);
+      const faqEntries = faqRes.entries || [];
+      const chatLogs = chatRes.logs || [];
+
+      const faqRows: (string | number)[][] = [
+        ['FAQ ID', 'Section', 'Question', 'Answer', 'Status', 'Wiki Sections', 'Updated']
+      ];
+      const sectionNameById: Record<string, string> = {};
+      faqSections.forEach(s => { sectionNameById[s.id] = s.name; });
+      faqEntries.forEach((f: any) => {
+        faqRows.push([
+          f.id,
+          sectionNameById[f.sectionId] || f.sectionId,
+          f.question,
+          f.answer,
+          f.status,
+          (f.moduleTags || []).join(', '),
+          f.updatedAt || ''
+        ]);
+      });
+
+      const chatRows: (string | number)[][] = [
+        ['Timestamp', 'User', 'Email', 'Linked Section', 'Question', 'Answer Preview']
+      ];
+      chatLogs.forEach((c: any) => {
+        chatRows.push([
+          c.timestamp,
+          c.userName,
+          c.userEmail,
+          c.section,
+          c.question,
+          c.answerPreview || ''
+        ]);
+      });
+
+      const result = await exportLogSheet(
+        token,
+        driveFolderId.trim(),
+        systemConfig?.logSheetId,
+        { faqRows, chatRows }
+      );
+
+      await fetch('/api/config/log-sheet', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logSheetId: result.id, logSheetUrl: result.url })
+      });
+
+      setSheetMessage(`Linked Google Sheet updated: ${faqRows.length - 1} FAQs, ${chatRows.length - 1} TFAN log rows.`);
+      onRefreshData();
+    } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user') {
+        // ignore
+      } else {
+        setSheetIsError(true);
+        setSheetMessage(err.message || String(err));
+      }
+    } finally {
+      setSheetBusy(false);
+    }
+  };
 
   const handleCreateDriveSubfolders = async () => {
     setCreatingFolders(true);
@@ -379,6 +533,7 @@ export default function AdminConsole({
       const data = await res.json();
       if (res.ok) {
         setConfigSuccess('System configurations updated and logged successfully!');
+        setFolderEditUnlocked(false);
         onRefreshData();
         setTimeout(() => setConfigSuccess(null), 4000);
       } else {
@@ -464,16 +619,63 @@ export default function AdminConsole({
         
         {/* Tab 1: Sync and Manual Import */}
         {activeTab === 'sync' && (
+          <div className="space-y-8">
+            {/* PRIMARY: Live Google Drive Sync */}
+            <div className="bg-white border-2 border-emerald-200 rounded-2xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-2 border-b pb-2 border-slate-100">
+                <CloudDownload className="h-5 w-5 text-emerald-800" />
+                <h3 className="text-sm font-bold text-slate-800">Sync from Google Drive</h3>
+                <span className="ml-auto text-[10px] font-bold uppercase bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">Live</span>
+              </div>
+
+              <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-3.5 mb-4">
+                <p className="text-xs text-slate-700 font-semibold mb-1.5">How this works (no technical steps):</p>
+                <ol className="text-[11px] text-slate-600 leading-relaxed list-decimal ml-4 space-y-0.5">
+                  <li>In Google Drive, open the Wiki resource folder and its section subfolders.</li>
+                  <li>Drag &amp; drop your files into the matching section subfolder (e.g. put quality docs in <span className="font-mono">/Quality Ratings</span>).</li>
+                  <li>Come back here and click <span className="font-bold">Sync from Google Drive</span>. Every file is indexed into the correct Wiki section automatically.</li>
+                  <li>Edited a file in Drive? Just sync again — the Wiki always reflects the current Drive version.</li>
+                </ol>
+                <p className="text-[10px] text-slate-500 mt-2">
+                  Files must live inside the section subfolders. Use <span className="font-semibold">Wiki Sections → Auto-create subfolders</span> to set those up so their names match your sections exactly.
+                </p>
+              </div>
+
+              {syncMessage && (
+                <div className={`p-3.5 rounded-xl border mb-4 text-xs leading-relaxed break-words ${
+                  syncIsError ? 'bg-red-50 border-red-100 text-red-800' : 'bg-emerald-50 border-emerald-100 text-emerald-800'
+                }`}>
+                  {syncMessage}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleLiveSync}
+                disabled={syncing}
+                className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {syncing ? (
+                  <><RefreshCw className="h-4 w-4 animate-spin" /> Scanning Google Drive…</>
+                ) : (
+                  <><CloudDownload className="h-4 w-4" /> Sync from Google Drive</>
+                )}
+              </button>
+              <p className="text-[10px] text-slate-400 mt-2 text-center">
+                You'll be asked to authorize Google access the first time. Reads the folder set in System Config: <span className="font-mono">{driveFolderName || 'not set'}</span>.
+              </p>
+            </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Google Drive Webhook Simulator */}
+            {/* Offline Drive sandbox (manual placeholder records) */}
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
               <div>
                 <div className="flex items-center gap-2 mb-2 border-b pb-2 border-slate-100">
-                  <RefreshCw className="h-5 w-5 text-emerald-800" />
-                  <h3 className="text-sm font-bold text-slate-800">Google Drive Webhook Simulator</h3>
+                  <RefreshCw className="h-5 w-5 text-slate-500" />
+                  <h3 className="text-sm font-bold text-slate-800">Drive Sync Sandbox (testing only)</h3>
                 </div>
                 <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                  True Footage utilizes Google Drive's push notifications (`changes.watch`). When users drop or edit files in Google Drive, Google pings our webhook. Use this sandbox to test instant background synchronization.
+                  For demos/offline testing only. This adds a <span className="font-semibold">placeholder</span> record without touching Google Drive — use <span className="font-semibold">Sync from Google Drive</span> above for real files.
                 </p>
 
                 {hookMessage && (
@@ -555,10 +757,10 @@ export default function AdminConsole({
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
               <div className="flex items-center gap-2 mb-2 border-b pb-2 border-slate-100">
                 <Plus className="h-5 w-5 text-emerald-800" />
-                <h3 className="text-sm font-bold text-slate-800">Index Custom Wiki Resource</h3>
+                <h3 className="text-sm font-bold text-slate-800">Add a Single Resource by Link</h3>
               </div>
               <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                Register metadata indices for any custom external documents or checklists directly into the Firestore directory cache.
+                Use this to add one document that lives outside the synced Drive folders (e.g. an external website, a video, or a specific shared file). Paste its share link and pick the Wiki section it belongs to. For files in your Drive folders, use <span className="font-semibold">Sync from Google Drive</span> instead.
               </p>
 
               <form onSubmit={handleManualResource} className="space-y-3">
@@ -650,6 +852,7 @@ export default function AdminConsole({
               </form>
             </div>
           </div>
+          </div>
         )}
 
         {/* Tab 2: Wiki Sections Management */}
@@ -668,6 +871,70 @@ export default function AdminConsole({
             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
               Curate the reference structure of the UAD 3.6 Wiki. Adding, renaming, deleting, or reordering wiki sections will instantly cascade tag associations across all indexed wiki documents and active FAQs.
             </p>
+
+            {/* Google Drive folder alignment + Auto-create subfolders (#5) */}
+            <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 mb-5 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <FolderSync className="h-4 w-4 text-emerald-800" />
+                  <span className="text-xs font-bold text-slate-800">Wiki Sections ↔ Google Drive Folders</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreateDriveSubfolders}
+                  disabled={creatingFolders}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition cursor-pointer shadow-sm"
+                >
+                  {creatingFolders ? (
+                    <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Creating in Drive…</>
+                  ) : (
+                    <><FolderPlus className="h-3.5 w-3.5" /> Auto-create subfolders in Drive</>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Each Wiki section has a matching subfolder inside your Google Drive resource folder
+                (<span className="font-mono">{driveFolderName || 'set this in System Config'}</span>). Staff drop files into
+                a section's Drive subfolder; you then run <span className="font-semibold">Sync from Google Drive</span> and the files
+                appear in that Wiki section. Click the button to create one Drive subfolder per section below — the folder names
+                are matched to your section names automatically.
+              </p>
+
+              {folderResults && (
+                <div className="p-3 bg-white border border-emerald-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
+                      <Check className="h-4 w-4 text-emerald-600" />
+                      Subfolders ready in Drive
+                    </div>
+                    {folderResults.some(f => (f as any).fallbackToRoot) && (
+                      <span className="text-[10px] text-amber-800 bg-amber-100 px-2 py-0.5 rounded font-medium">
+                        Some created in My Drive (folder ID not found)
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[10px] font-mono">
+                    {folderResults.map((f, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-1 text-slate-700 bg-slate-50 px-2 py-1 rounded border border-emerald-100">
+                        <span className="truncate" title={f.error || f.folderName}>
+                          {f.created ? '✅' : '❌'} {f.folderName}
+                        </span>
+                        {f.folderId && (
+                          <a
+                            href={`https://drive.google.com/drive/folders/${f.folderId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-emerald-700 hover:underline flex items-center gap-0.5 text-[9px] shrink-0"
+                          >
+                            Open <ExternalLink className="h-2.5 w-2.5" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {moduleError && (
               <div className="p-3 bg-red-50 border border-red-100 text-red-800 text-xs rounded-xl mb-4 font-semibold flex items-center gap-2">
@@ -919,128 +1186,81 @@ export default function AdminConsole({
             )}
 
             <form onSubmit={handleSaveConfig} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">
-                  Google Drive Resource Folder ID
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <Database className="h-4 w-4" />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    value={driveFolderId}
-                    onChange={(e) => setDriveFolderId(e.target.value)}
-                    placeholder="Enter alphanumeric Google Drive folder ID..."
-                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-emerald-800 font-mono font-medium"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1 leading-normal">
-                  The target Google Drive directory from which files are automatically synced via webhook callbacks.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1.5">
-                  Google Drive Resource Folder Name
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <FolderSync className="h-4 w-4" />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    value={driveFolderName}
-                    onChange={(e) => setDriveFolderName(e.target.value)}
-                    placeholder="e.g. UAD 3.6 Wiki Resources"
-                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-emerald-800 font-medium"
-                  />
-                </div>
-              </div>
-
-              {/* Recommended Section Subfolders Reference & Automated Creation */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
+              {/* Protected folder link (#6) */}
+              <div className={`rounded-xl border p-3.5 space-y-4 ${folderEditUnlocked ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-slate-50/60'}`}>
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <FolderSync className="h-4 w-4 text-emerald-800" />
-                    <span className="text-xs font-bold text-slate-800">
-                      Section Subfolders Structure
-                    </span>
+                    {folderEditUnlocked ? <Unlock className="h-4 w-4 text-amber-700" /> : <Lock className="h-4 w-4 text-slate-500" />}
+                    <span className="text-xs font-bold text-slate-800">Google Drive Resource Folder (protected)</span>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={handleCreateDriveSubfolders}
-                    disabled={creatingFolders}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition cursor-pointer shadow-sm"
-                  >
-                    {creatingFolders ? (
-                      <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        Creating Folders in Drive...
-                      </>
-                    ) : (
-                      <>
-                        <FolderPlus className="h-3.5 w-3.5 text-emerald-200" />
-                        Auto-Create Subfolders in Drive
-                      </>
-                    )}
-                  </button>
+                  {folderEditUnlocked ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Re-lock and restore original values
+                        if (systemConfig) {
+                          setDriveFolderId(systemConfig.driveFolderId || '');
+                          setDriveFolderName(systemConfig.driveFolderName || '');
+                        }
+                        setFolderEditUnlocked(false);
+                      }}
+                      className="text-[10px] font-bold text-slate-600 hover:text-slate-900 border border-slate-300 rounded-lg px-2.5 py-1 cursor-pointer"
+                    >
+                      Cancel edit
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowFolderWarning(true)}
+                      className="inline-flex items-center gap-1.5 text-[10px] font-bold text-amber-800 hover:text-amber-900 border border-amber-300 bg-amber-50 rounded-lg px-2.5 py-1 cursor-pointer"
+                    >
+                      <Edit2 className="h-3 w-3" /> Edit folder link
+                    </button>
+                  )}
                 </div>
 
-                <p className="text-[11px] text-slate-600 leading-normal">
-                  Inside your main Google Drive folder, subfolders organize files by Wiki section. Clicking the button above creates all 10 section subfolders in your Google Drive automatically:
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10px] font-mono text-slate-700 bg-white p-2.5 border border-slate-200 rounded-lg">
-                  <div>📁 /UAD 3.6 Crosswalk Playbook</div>
-                  <div>📁 /Form Layouts &amp; Uniform Reporting</div>
-                  <div>📁 /Subject Property Characteristics</div>
-                  <div>📁 /Condition Ratings</div>
-                  <div>📁 /Quality Ratings</div>
-                  <div>📁 /Sketch and Finished/Unfinished reporting</div>
-                  <div>📁 /Sales Comparison Approach &amp; Grid</div>
-                  <div>📁 /Photos Maps Exhibits</div>
-                  <div>📁 /Total &amp; Total Mobile</div>
-                  <div>📁 /TF Formfiller</div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                    Resource Folder ID
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <Database className="h-4 w-4" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      disabled={!folderEditUnlocked}
+                      value={driveFolderId}
+                      onChange={(e) => setDriveFolderId(e.target.value)}
+                      placeholder="Enter alphanumeric Google Drive folder ID..."
+                      className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-emerald-800 font-mono font-medium disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                    The Google Drive folder that <span className="font-semibold">Sync from Google Drive</span> reads. Changing it repoints the entire Wiki to a different folder.
+                  </p>
                 </div>
 
-                {folderResults && (
-                  <div className="mt-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
-                        <Check className="h-4 w-4 text-emerald-600" />
-                        Subfolders Setup Complete
-                      </div>
-                      {folderResults.some(f => f.fallbackToRoot) && (
-                        <span className="text-[10px] text-amber-800 bg-amber-100 px-2 py-0.5 rounded font-medium">
-                          Created in My Drive (Specified parent folder ID was not found)
-                        </span>
-                      )}
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                    Resource Folder Name
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <FolderSync className="h-4 w-4" />
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[10px] font-mono">
-                      {folderResults.map((f, idx) => (
-                        <div key={idx} className="flex items-center justify-between gap-1 text-slate-700 bg-white px-2 py-1 rounded border border-emerald-100">
-                          <span className="truncate" title={f.error || f.folderName}>
-                            {f.created ? '✅' : '❌'} {f.folderName}
-                          </span>
-                          {f.folderId && (
-                            <a
-                              href={`https://drive.google.com/drive/folders/${f.folderId}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-emerald-700 hover:underline flex items-center gap-0.5 text-[9px] shrink-0"
-                            >
-                              Open <ExternalLink className="h-2.5 w-2.5" />
-                            </a>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <input
+                      type="text"
+                      required
+                      disabled={!folderEditUnlocked}
+                      value={driveFolderName}
+                      onChange={(e) => setDriveFolderName(e.target.value)}
+                      placeholder="e.g. UAD 3.6 Wiki Resources"
+                      className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-emerald-800 font-medium disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
+                    />
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Save System Configuration Button */}
@@ -1051,6 +1271,92 @@ export default function AdminConsole({
                 Save System Configuration
               </button>
             </form>
+
+            {/* Linked Google Sheet export (#8) */}
+            <div className="mt-6 pt-5 border-t border-slate-100">
+              <div className="flex items-center gap-2 mb-2">
+                <FileSpreadsheet className="h-5 w-5 text-emerald-800" />
+                <h3 className="text-sm font-bold text-slate-800">Linked Google Sheet (FAQ + TFAN Logs)</h3>
+              </div>
+              <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+                Creates (or refreshes) a Google Sheet inside your resource folder with two tabs — <span className="font-semibold">FAQ Log</span> and <span className="font-semibold">TFAN Log</span> — mirroring all FAQs and every TFAN chat question for review and record-keeping.
+              </p>
+
+              {sheetMessage && (
+                <div className={`p-3 rounded-xl border mb-3 text-xs leading-relaxed break-words ${
+                  sheetIsError ? 'bg-red-50 border-red-100 text-red-800' : 'bg-emerald-50 border-emerald-100 text-emerald-800'
+                }`}>
+                  {sheetMessage}
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportSheet}
+                  disabled={sheetBusy}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  {sheetBusy ? (
+                    <><RefreshCw className="h-4 w-4 animate-spin" /> Updating Sheet…</>
+                  ) : (
+                    <><FileSpreadsheet className="h-4 w-4" /> {systemConfig?.logSheetUrl ? 'Refresh linked Sheet' : 'Create linked Sheet'}</>
+                  )}
+                </button>
+                {systemConfig?.logSheetUrl && (
+                  <a
+                    href={systemConfig.logSheetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 border border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Open Sheet <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+              {systemConfig?.logSheetUpdatedAt && (
+                <p className="text-[10px] text-slate-400 mt-2">Last exported: {new Date(systemConfig.logSheetUpdatedAt).toLocaleString()}</p>
+              )}
+            </div>
+
+            {/* Folder-edit warning modal (#6) */}
+            {showFolderWarning && (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden">
+                  <div className="bg-amber-500 text-white px-4 py-3 flex items-center gap-2">
+                    <ShieldAlert className="h-5 w-5" />
+                    <h4 className="text-sm font-extrabold">Change the Drive folder link?</h4>
+                  </div>
+                  <div className="p-5 space-y-3 text-sm text-slate-700">
+                    <p className="leading-relaxed">
+                      The Resource Folder ID and Name connect this entire Wiki to your Google Drive. Changing them will:
+                    </p>
+                    <ul className="list-disc ml-5 text-xs text-slate-600 space-y-1">
+                      <li>Repoint <span className="font-semibold">Sync from Google Drive</span> to a different folder.</li>
+                      <li>Affect where the linked Google Sheet and auto-created subfolders are placed.</li>
+                      <li>Potentially disconnect previously synced files from their source.</li>
+                    </ul>
+                    <p className="text-xs text-slate-500">Only change this if you are intentionally moving the Wiki to a new Drive folder.</p>
+                  </div>
+                  <div className="px-5 pb-5 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowFolderWarning(false)}
+                      className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-300 rounded-xl hover:bg-slate-50 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setFolderEditUnlocked(true); setShowFolderWarning(false); }}
+                      className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl cursor-pointer"
+                    >
+                      I understand — unlock editing
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
