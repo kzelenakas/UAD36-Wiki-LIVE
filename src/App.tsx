@@ -85,11 +85,15 @@ export default function App() {
     }
   };
 
+  // Fetch data only AFTER Firebase auth is ready — otherwise the very first
+  // load fires these /api calls before the ID token exists, they 401, and the
+  // UI is left empty with no retry. Gating on authReady (and re-running when it
+  // flips true) guarantees the token is attached to every data request.
   useEffect(() => {
-    if (user) {
+    if (user && authReady) {
       fetchAllData();
     }
-  }, [user]);
+  }, [user, authReady]);
 
   // Security: require a live Firebase session. If Firebase has no signed-in
   // user (session expired / signed out elsewhere), drop the cached profile and
