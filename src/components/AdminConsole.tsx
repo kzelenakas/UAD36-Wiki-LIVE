@@ -250,7 +250,7 @@ export default function AdminConsole({
         setCreatingFolders(false);
         return;
       }
-      const res = await createDriveSectionSubfolders(token, driveFolderId);
+      const res = await createDriveSectionSubfolders(token, driveFolderId, sectionNames);
       setFolderResults(res);
     } catch (err: any) {
       if (err?.code === 'auth/popup-closed-by-user') {

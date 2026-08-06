@@ -173,111 +173,70 @@ ${QDT_OUTLINE_CONTENT.features.map((f, idx) => `  ${idx + 1}. ${f.name}\n     ${
   return { documentId, documentUrl };
 }
 
+function normalizeSectionName(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Create one Drive subfolder per CURRENT app section (passed in as sectionNames)
+ * under the resource folder. Driven by the live sections — never a hardcoded
+ * list — so it can't resurrect old/renamed sections. Existing folders are
+ * matched by NORMALIZED name (so "Photos/Maps/Exhibits" reuses an existing
+ * "Photos Maps Exhibits" instead of making a near-duplicate).
+ */
 export async function createDriveSectionSubfolders(
   accessToken: string,
-  parentFolderId?: string
-): Promise<{ folderName: string; folderId: string; created: boolean; existed?: boolean; fallbackToRoot?: boolean; error?: string }[]> {
-  const sectionFolderNames = [
-    "UAD 3.6 Crosswalk Playbook",
-    "Form Layouts & Uniform Reporting",
-    "Subject Property Characteristics",
-    "Condition Ratings",
-    "Quality Ratings",
-    "Sketch and Finished/Unfinished reporting",
-    "Sales Comparison Approach & Grid",
-    "Photos Maps Exhibits",
-    "Total & Total Mobile",
-    "TF Formfiller"
-  ];
+  parentFolderId: string | undefined,
+  sectionNames: string[]
+): Promise<{ folderName: string; folderId: string; created: boolean; existed?: boolean; error?: string }[]> {
+  const results: { folderName: string; folderId: string; created: boolean; existed?: boolean; error?: string }[] = [];
+  const names = (sectionNames || []).map(n => (n || '').trim()).filter(Boolean);
+  if (!names.length) return results;
+  const parent = (parentFolderId || '').trim();
 
-  const results: { folderName: string; folderId: string; created: boolean; existed?: boolean; fallbackToRoot?: boolean; error?: string }[] = [];
-
-  for (const name of sectionFolderNames) {
-    const bodyData: any = {
-      name: name,
-      mimeType: "application/vnd.google-apps.folder"
-    };
-    if (parentFolderId && parentFolderId.trim() !== "") {
-      bodyData.parents = [parentFolderId.trim()];
-    }
-
+  // List existing subfolders once, indexed by normalized name.
+  const byNorm = new Map<string, { id: string; name: string }>();
+  if (parent) {
     try {
-      // Safeguard against duplicates: if a same-named subfolder already exists
-      // under the parent, reuse it instead of creating another one. (Drive
-      // happily creates multiple folders with the same name, so re-running this
-      // without the check is what produced the duplicates.)
-      if (parentFolderId && parentFolderId.trim() !== "") {
-        const q = encodeURIComponent(
-          `'${parentFolderId.trim()}' in parents and name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
-        );
-        const findRes = await fetch(
-          `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (findRes.ok) {
-          const found = await findRes.json();
-          if (found.files && found.files.length > 0) {
-            results.push({ folderName: name, folderId: found.files[0].id, created: false, existed: true });
-            continue;
-          }
-        }
+      const q = encodeURIComponent(
+        `'${parent}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
+      );
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (res.ok) {
+        const d = await res.json();
+        for (const f of (d.files || [])) byNorm.set(normalizeSectionName(f.name), f);
       }
+    } catch { /* treat as none existing */ }
+  }
 
-      let res = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json"
-        },
+  for (const name of names) {
+    const norm = normalizeSectionName(name);
+    const match = byNorm.get(norm);
+    if (match) {
+      results.push({ folderName: name, folderId: match.id, created: false, existed: true });
+      continue;
+    }
+    const bodyData: any = { name, mimeType: 'application/vnd.google-apps.folder' };
+    if (parent) bodyData.parents = [parent];
+    try {
+      const res = await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData)
       });
-
-      if (!res.ok && parentFolderId && parentFolderId.trim() !== "") {
-        const errJson = await res.json().catch(() => ({}));
-        const errMessage = errJson.error?.message || "";
-        const isNotFound = res.status === 404 || errMessage.toLowerCase().includes("file not found");
-
-        if (isNotFound) {
-          // Fallback: create in My Drive root if parent folder ID doesn't exist or isn't accessible
-          delete bodyData.parents;
-          res = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(bodyData)
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            results.push({
-              folderName: name,
-              folderId: data.id,
-              created: true,
-              fallbackToRoot: true,
-              error: `Created in My Drive (parent folder "${parentFolderId.trim()}" not found)`
-            });
-            continue;
-          }
-        }
-
-        const msg = errJson.error?.message || "Failed to create folder";
-        results.push({ folderName: name, folderId: "", created: false, error: msg });
-        continue;
-      }
-
       if (res.ok) {
         const data = await res.json();
         results.push({ folderName: name, folderId: data.id, created: true });
+        byNorm.set(norm, { id: data.id, name }); // guard against dup section names within this run
       } else {
         const err = await res.json().catch(() => ({}));
-        const msg = err.error?.message || "Failed to create folder";
-        results.push({ folderName: name, folderId: "", created: false, error: msg });
+        results.push({ folderName: name, folderId: '', created: false, error: err.error?.message || `Failed to create folder (${res.status})` });
       }
     } catch (e: any) {
-      console.error(`Error creating folder ${name}:`, e);
-      results.push({ folderName: name, folderId: "", created: false, error: e.message || "Network error" });
+      results.push({ folderName: name, folderId: '', created: false, error: e.message || 'Network error' });
     }
   }
 
