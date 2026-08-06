@@ -138,6 +138,8 @@ export interface SystemConfig {
   driveFolderId: string;
   driveFolderName: string;
   notebookLmUrl: string;
+  /** Editable TFAN response-style directive (verbosity/tone). Admin-tunable. */
+  tfanResponseStyle?: string;
   /** ID + URL of the linked Google Sheet that mirrors FAQ + TFAN logs (#8). */
   logSheetId?: string;
   logSheetUrl?: string;

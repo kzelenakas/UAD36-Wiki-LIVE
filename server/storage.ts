@@ -71,7 +71,19 @@ async function tryInitFirestore(): Promise<boolean> {
 
 export async function initStorage(): Promise<Backend> {
   if (initialised) return backend;
+  const forced = (process.env.STORAGE_BACKEND || '').toLowerCase();
   const ok = await tryInitFirestore();
+  if (!ok && forced === 'firestore') {
+    // Production forces Firestore so a transient init failure can NEVER silently
+    // fall back to the ephemeral file store. That fallback resets on every deploy
+    // and is what made documents + config look "wiped". Fail loudly instead — the
+    // old revision keeps serving until Firestore is reachable again.
+    throw new Error(
+      'STORAGE_BACKEND=firestore but Firestore could not be initialised. ' +
+      'Refusing to fall back to the ephemeral file store (would lose data on deploy). ' +
+      'Check the runtime service account has roles/datastore.user and the Firestore database exists.'
+    );
+  }
   backend = ok ? 'firestore' : 'file';
   initialised = true;
   console.log(`[storage] Using ${backend} backend for the data store.`);

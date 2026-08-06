@@ -84,6 +84,7 @@ export default function AdminConsole({
   const [driveFolderId, setDriveFolderId] = useState('');
   const [driveFolderName, setDriveFolderName] = useState('');
   const [notebookLmUrl, setNotebookLmUrl] = useState('');
+  const [tfanResponseStyle, setTfanResponseStyle] = useState('');
   const [configSuccess, setConfigSuccess] = useState<string | null>(null);
 
   // Drive subfolders creation state
@@ -287,6 +288,7 @@ export default function AdminConsole({
       setDriveFolderId(systemConfig.driveFolderId || '');
       setDriveFolderName(systemConfig.driveFolderName || '');
       setNotebookLmUrl(systemConfig.notebookLmUrl || '');
+      setTfanResponseStyle((systemConfig as any).tfanResponseStyle || '');
     }
   }, [systemConfig]);
 
@@ -527,6 +529,7 @@ export default function AdminConsole({
           driveFolderId: driveFolderId.trim(),
           driveFolderName: driveFolderName.trim(),
           notebookLmUrl: notebookLmUrl.trim(),
+          tfanResponseStyle: tfanResponseStyle,
           actorEmail: userEmail
         })
       });
@@ -917,7 +920,7 @@ export default function AdminConsole({
                     {folderResults.map((f, idx) => (
                       <div key={idx} className="flex items-center justify-between gap-1 text-slate-700 bg-slate-50 px-2 py-1 rounded border border-emerald-100">
                         <span className="truncate" title={f.error || f.folderName}>
-                          {f.created ? '✅' : '❌'} {f.folderName}
+                          {f.created ? '✅ created' : (f as any).existed ? '↩︎ already exists' : '❌'} {f.folderName}
                         </span>
                         {f.folderId && (
                           <a
@@ -1261,6 +1264,23 @@ export default function AdminConsole({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* TFAN response style — freely editable (not folder-locked) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                  TFAN Response Style
+                </label>
+                <textarea
+                  rows={7}
+                  value={tfanResponseStyle}
+                  onChange={(e) => setTfanResponseStyle(e.target.value)}
+                  placeholder="Instructions that control how the TFAN assistant answers (length, tone, citations)…"
+                  className="w-full p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-emerald-800 font-mono leading-relaxed"
+                />
+                <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                  Controls how the TFAN assistant answers — edit for shorter/longer or a different tone. Takes effect immediately on save; no redeploy. Leave blank to restore the built-in succinct default.
+                </p>
               </div>
 
               {/* Save System Configuration Button */}

@@ -13,12 +13,22 @@ interface DataStore {
   config?: SystemConfig;
 }
 
+// Default TFAN response-style directive. Editable per-deployment in System
+// Config (Admin Console) — this is only the fallback when none is set.
+export const DEFAULT_TFAN_RESPONSE_STYLE = `RESPONSE STYLE (be succinct):
+1. Lead with the direct answer in the first sentence. No preamble, no restating the question.
+2. Keep it under ~120 words unless the appraiser asks to "explain" or "expand." Use a short bullet list only when steps or multiple criteria warrant it.
+3. Cite the specific authority inline (e.g., "Fannie Mae UAD 3.6 Appendix D" / "USPAP Standard 1"). One citation beats three vague ones.
+4. Ground every claim in the sources above; if a source doesn't cover it, say so briefly rather than filling space.`;
+
 const DEFAULT_CONFIG: SystemConfig = {
   // Drive source folder for section resources.
   driveFolderId: process.env.DRIVE_FOLDER_ID || "1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F",
   driveFolderName: "UAD 3.6 Wiki Resources",
   // NotebookLM link for the TFAN tool (separate setting from the Drive folder).
-  notebookLmUrl: process.env.NOTEBOOKLM_URL || "https://notebooklm.google.com/notebook/56412ddc-9382-4b7b-8696-83451e44d253"
+  notebookLmUrl: process.env.NOTEBOOKLM_URL || "https://notebooklm.google.com/notebook/56412ddc-9382-4b7b-8696-83451e44d253",
+  // Editable TFAN response style — admins tune this in System Config, no redeploy.
+  tfanResponseStyle: DEFAULT_TFAN_RESPONSE_STYLE
 };
 
 const DEFAULT_SECTIONS: FAQSection[] = [
@@ -425,6 +435,10 @@ class Database {
     // Heal the old fake NotebookLM placeholder so the TFAN link isn't broken.
     if (!cfg.notebookLmUrl || cfg.notebookLmUrl.includes('12345-67890')) {
       cfg.notebookLmUrl = DEFAULT_CONFIG.notebookLmUrl;
+    }
+    // Seed the response style for configs saved before this field existed.
+    if (!cfg.tfanResponseStyle) {
+      cfg.tfanResponseStyle = DEFAULT_TFAN_RESPONSE_STYLE;
     }
     return cfg;
   }

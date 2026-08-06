@@ -57,7 +57,7 @@ steps:
       # outside this pipeline — e.g. GEMINI_API_KEY added via the console or
       # Secret Manager — are preserved across deploys instead of wiped.
       - '--update-env-vars'
-      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID},ADMIN_EMAILS=${_ADMIN_EMAILS},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=${_USE_VERTEXAI},VERTEX_LOCATION=${_VERTEX_LOCATION},TFAN_AI_MODEL=${_TFAN_AI_MODEL}'
+      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID},ADMIN_EMAILS=${_ADMIN_EMAILS},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=${_USE_VERTEXAI},VERTEX_LOCATION=${_VERTEX_LOCATION},TFAN_AI_MODEL=${_TFAN_AI_MODEL},STORAGE_BACKEND=${_STORAGE_BACKEND}'
 
 substitutions:
   _REPO_NAME: 'uad36-wiki'
@@ -73,6 +73,9 @@ substitutions:
   # Requires: Vertex AI API enabled + runtime SA has roles/aiplatform.user.
   _USE_VERTEXAI: 'true'
   _VERTEX_LOCATION: 'us-central1'
+  # Force durable Firestore in prod — never silently use the ephemeral file
+  # store (which resets every deploy and wiped documents/config).
+  _STORAGE_BACKEND: 'firestore'
   # gemini-2.0-flash is RETIRED (EOL June 2026) — do not use it.
   # gemini-2.5-flash is the current GA Flash model on Vertex (confirmed GA
   # 2025-06-17). Note: scheduled to sunset 2026-10-16 — bump this to the next

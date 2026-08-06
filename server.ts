@@ -337,21 +337,22 @@ app.get("/api/config", (req, res) => {
 });
 
 app.put("/api/config", requireAdmin, (req, res) => {
-  const { driveFolderId, driveFolderName, notebookLmUrl } = req.body;
-  // Two independent settings live here:
-  //   - driveFolderId/driveFolderName: the Drive source folder for section resources
-  //   - notebookLmUrl: the NotebookLM link for the TFAN tool
-  // They must save independently — a blank in one must never block the other.
-  // Require only the field being set; only fields actually sent are updated.
-  if (driveFolderId === undefined && driveFolderName === undefined && notebookLmUrl === undefined) {
+  const { driveFolderId, driveFolderName, notebookLmUrl, tfanResponseStyle } = req.body;
+  // Independent settings live here (Drive folder, NotebookLM link, TFAN response
+  // style). Each saves on its own — a blank in one must never block the others.
+  // Only fields actually sent are updated.
+  if (driveFolderId === undefined && driveFolderName === undefined &&
+      notebookLmUrl === undefined && tfanResponseStyle === undefined) {
     return res.status(400).json({ error: "No configuration fields provided" });
   }
   if (driveFolderId !== undefined && !driveFolderId) {
     return res.status(400).json({ error: "Source folder ID cannot be blank" });
   }
-  const patch: Record<string, string> = { driveFolderId };
+  const patch: Record<string, string> = {};
+  if (driveFolderId !== undefined) patch.driveFolderId = driveFolderId;
   if (driveFolderName !== undefined) patch.driveFolderName = driveFolderName;
   if (notebookLmUrl !== undefined) patch.notebookLmUrl = notebookLmUrl;
+  if (tfanResponseStyle !== undefined) patch.tfanResponseStyle = tfanResponseStyle;
   const config = db.updateConfig(patch, actor(req));
   res.json({ config });
 });
@@ -606,19 +607,17 @@ PRIMARY KNOWLEDGE SOURCES (NotebookLM Master Vault):
       });
     }
 
+    // Admin-editable response style (verbosity/tone) from System Config.
     contextText += `
-RESPONSE GUIDELINES:
-1. Reference official NotebookLM sources (GSE UAD 3.6 specs, USPAP standards, appraisal textbooks) for definitions, guidelines, and rules.
-2. Correlate the response directly with the active wiki section ("${moduleId}") and its specific documents listed above.
-3. Provide a structured, authoritative, and helpful answer for a professional real estate appraiser.
-4. Include citations linking back to referenced sources.
+${db.getConfig().tfanResponseStyle || ""}
+
+Also: correlate your answer with the active wiki section ("${moduleId}") and the section documents listed above, and cite the specific sources you used.
 `;
   } else {
     contextText += `
-RESPONSE GUIDELINES:
-1. Ground your response in official NotebookLM sources (GSE UAD 3.6 specs, USPAP 2024-2025, and appraisal textbooks).
-2. Do not restrict your answer to any single local section document. Provide a comprehensive appraisal standard answer.
-3. Keep the tone professional, objective, and clear.
+${db.getConfig().tfanResponseStyle || ""}
+
+Also: draw on the full body of official sources above; do not restrict the answer to a single document.
 `;
   }
 
