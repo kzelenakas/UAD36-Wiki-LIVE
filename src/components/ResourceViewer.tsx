@@ -215,7 +215,7 @@ export default function ResourceViewer({
   );
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-6 font-sans">
+    <div className="w-full max-w-[1800px] mx-auto px-4 py-6 font-sans">
       {/* Top bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-200">
         <div className="flex items-center gap-3">
@@ -265,7 +265,7 @@ export default function ResourceViewer({
         
         {/* Left 8 columns: Render Embed stage */}
         <div className="lg:col-span-8 flex flex-col gap-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg flex flex-col h-[550px]">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg flex flex-col h-[calc(100vh-210px)] min-h-[550px]">
             {/* Stage Tabs */}
             <div className="bg-slate-950 border-b border-slate-800 px-4 py-2 flex items-center justify-between">
               <div className="flex gap-2">
@@ -312,7 +312,7 @@ export default function ResourceViewer({
                         src={resource.webViewLink}
                         alt={resource.title}
                         referrerPolicy="no-referrer"
-                        className="max-h-[460px] object-contain rounded-lg shadow-2xl border border-slate-700"
+                        className="max-h-full object-contain rounded-lg shadow-2xl border border-slate-700"
                       />
                       <span className="text-slate-400 text-xs mt-3 block">{resource.title} • Structural Exhibit</span>
                     </div>
