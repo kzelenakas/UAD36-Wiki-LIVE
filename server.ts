@@ -22,24 +22,39 @@ function actor(req: express.Request): string {
   return (u && u.email) || "system@truefootage.tech";
 }
 
-// Initialize Gemini Client safely
+// Initialize the Gemini client. Two supported modes:
+//   1. Vertex AI (preferred, no API key) — authenticates with the Cloud Run
+//      service account (ADC). Enabled with GOOGLE_GENAI_USE_VERTEXAI=true.
+//      Requires the Vertex AI API enabled on the project and the runtime SA to
+//      hold roles/aiplatform.user.
+//   2. AI Studio API key — fallback if GEMINI_API_KEY is set.
+// If neither is configured, Q&A runs in the rich simulated mode.
+const TFAN_AI_MODEL = process.env.TFAN_AI_MODEL || "gemini-2.0-flash";
 let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  try {
+const useVertex = (process.env.GOOGLE_GENAI_USE_VERTEXAI || "").toLowerCase() === "true";
+try {
+  if (useVertex) {
+    const project =
+      process.env.VERTEX_PROJECT_ID ||
+      process.env.FIREBASE_PROJECT_ID ||
+      process.env.GOOGLE_CLOUD_PROJECT ||
+      process.env.GCLOUD_PROJECT ||
+      "uad-36-knowledge-base";
+    const location = process.env.VERTEX_LOCATION || "us-central1";
+    ai = new GoogleGenAI({ vertexai: true, project, location });
+    console.log(`Gemini client initialized via Vertex AI (project=${project}, location=${location}, model=${TFAN_AI_MODEL}) — using the service account, no API key.`);
+  } else if (process.env.GEMINI_API_KEY) {
     ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
     });
-    console.log("Gemini Client initialized successfully for NotebookLM Q&A Proxy.");
-  } catch (error) {
-    console.error("Failed to initialize Gemini API Client:", error);
+    console.log(`Gemini client initialized via API key (model=${TFAN_AI_MODEL}).`);
+  } else {
+    console.log("No AI backend configured (set GOOGLE_GENAI_USE_VERTEXAI=true for Vertex, or GEMINI_API_KEY). Q&A will run in rich simulated mode.");
   }
-} else {
-  console.log("No GEMINI_API_KEY environment variable found. Q&A will run in rich simulated mode.");
+} catch (error) {
+  console.error("Failed to initialize Gemini client:", error);
+  ai = null;
 }
 
 // -------------------------------------------------------------
@@ -611,7 +626,7 @@ RESPONSE GUIDELINES:
       });
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: TFAN_AI_MODEL,
         contents: messages,
         config: {
           temperature: 0.2, // Low temperature for high precision grounding
