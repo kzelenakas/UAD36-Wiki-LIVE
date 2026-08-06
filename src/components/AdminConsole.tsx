@@ -527,6 +527,26 @@ export default function AdminConsole({
     }
   };
 
+  // Delete a resource with a confirm step (Resource Ordering trash button).
+  const handleDeleteResource = async (res: Resource) => {
+    const ok = confirm(
+      `Delete "${res.title}" from the Wiki?\n\n` +
+      `This removes it from the section list and cannot be undone here. ` +
+      `If it's a Drive-synced file, re-syncing will re-add it unless you also remove it from the Drive folder.`
+    );
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/resources/${res.id}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || `Delete failed (${r.status})`);
+      }
+      onRefreshData();
+    } catch (err: any) {
+      alert(`Could not delete: ${err.message || err}`);
+    }
+  };
+
   // Filter resources by currently selected module for reordering
   const reorderFilteredResources = resources
     .filter(r => r.moduleTags.includes(selectedReorderModule))
@@ -657,31 +677,27 @@ export default function AdminConsole({
                   <FolderSync className="h-5 w-5 text-emerald-800" />
                   <h3 className="text-sm font-bold text-slate-800">Live Google Drive Folder</h3>
                 </div>
-                {driveFolderId && (
-                  <a
-                    href={`https://drive.google.com/drive/folders/${driveFolderId.trim()}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[11px] font-bold text-emerald-700 hover:underline flex items-center gap-1 shrink-0"
-                  >
-                    Open in Drive <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
               </div>
               <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                Live view of the resource folder and its section subfolders. Add, rename, or remove files here in Drive, then click <span className="font-semibold">Sync from Google Drive</span> above — the Wiki mirrors this folder (new files added, removed files pruned, duplicates collapsed to the current version).
+                Manage the resource folder and its section subfolders directly in Google Drive — add, rename, or remove files — then click <span className="font-semibold">Sync from Google Drive</span> above; the Wiki mirrors this folder (new files added, removed files pruned, duplicates collapsed to the current version).
               </p>
               {driveFolderId ? (
-                <iframe
-                  title="Google Drive resource folder"
-                  src={`https://drive.google.com/embeddedfolderview?id=${driveFolderId.trim()}#grid`}
-                  className="w-full flex-1 min-h-[360px] border border-slate-200 rounded-xl bg-white"
-                />
+                <a
+                  href={`https://drive.google.com/drive/folders/${driveFolderId.trim()}?authuser=${encodeURIComponent(userEmail)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full bg-emerald-800 hover:bg-emerald-900 text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <FolderSync className="h-4 w-4" /> Open Google Drive Folder <ExternalLink className="h-3.5 w-3.5" />
+                </a>
               ) : (
                 <p className="text-xs text-slate-400 italic">
-                  Set the resource folder ID in System Configuration to view it here.
+                  Set the resource folder ID in System Configuration to open it.
                 </p>
               )}
+              <p className="text-[10px] text-slate-400 mt-2 leading-normal">
+                Opens with your True Footage account ({userEmail}). If Drive shows a personal account, your browser's default Google account isn't your work account — switch accounts in Drive, or use a Chrome profile signed into True Footage.
+              </p>
             </div>
 
             {/* Link Health check */}
@@ -1137,6 +1153,13 @@ export default function AdminConsole({
                           title="Sequence Down"
                         >
                           <ArrowDown className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteResource(res)}
+                          className="p-1.5 text-red-500 hover:text-white hover:bg-red-600 rounded-lg cursor-pointer transition border border-red-200 ml-1"
+                          title="Delete resource"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
