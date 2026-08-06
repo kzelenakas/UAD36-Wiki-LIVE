@@ -122,9 +122,12 @@ export async function scanResourceFolder(
 
 /** Build the correct embeddable preview URL for a Drive file. */
 export function driveEmbedUrl(driveFileId: string, resourceType: string): string {
-  if (resourceType === 'doc') return `https://docs.google.com/document/d/${driveFileId}/preview`;
-  if (resourceType === 'sheet') return `https://docs.google.com/spreadsheets/d/${driveFileId}/preview`;
-  if (resourceType === 'slide') return `https://docs.google.com/presentation/d/${driveFileId}/embed`;
+  // Tolerate legacy/verbose type names (document/spreadsheet/presentation)
+  // alongside the sync's short ones (doc/sheet/slide).
+  const t = (resourceType || '').toLowerCase();
+  if (t === 'doc' || t === 'document') return `https://docs.google.com/document/d/${driveFileId}/preview`;
+  if (t === 'sheet' || t === 'spreadsheet') return `https://docs.google.com/spreadsheets/d/${driveFileId}/preview`;
+  if (t === 'slide' || t === 'presentation') return `https://docs.google.com/presentation/d/${driveFileId}/embed`;
   // pdf / image / other binary files preview through the Drive viewer.
   return `https://drive.google.com/file/d/${driveFileId}/preview`;
 }

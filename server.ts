@@ -338,10 +338,21 @@ app.get("/api/config", (req, res) => {
 
 app.put("/api/config", requireAdmin, (req, res) => {
   const { driveFolderId, driveFolderName, notebookLmUrl } = req.body;
-  if (!driveFolderId || !driveFolderName || !notebookLmUrl) {
-    return res.status(400).json({ error: "Missing config parameters" });
+  // Two independent settings live here:
+  //   - driveFolderId/driveFolderName: the Drive source folder for section resources
+  //   - notebookLmUrl: the NotebookLM link for the TFAN tool
+  // They must save independently — a blank in one must never block the other.
+  // Require only the field being set; only fields actually sent are updated.
+  if (driveFolderId === undefined && driveFolderName === undefined && notebookLmUrl === undefined) {
+    return res.status(400).json({ error: "No configuration fields provided" });
   }
-  const config = db.updateConfig({ driveFolderId, driveFolderName, notebookLmUrl }, actor(req));
+  if (driveFolderId !== undefined && !driveFolderId) {
+    return res.status(400).json({ error: "Source folder ID cannot be blank" });
+  }
+  const patch: Record<string, string> = { driveFolderId };
+  if (driveFolderName !== undefined) patch.driveFolderName = driveFolderName;
+  if (notebookLmUrl !== undefined) patch.notebookLmUrl = notebookLmUrl;
+  const config = db.updateConfig(patch, actor(req));
   res.json({ config });
 });
 

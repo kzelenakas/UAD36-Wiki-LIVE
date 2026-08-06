@@ -14,9 +14,11 @@ interface DataStore {
 }
 
 const DEFAULT_CONFIG: SystemConfig = {
-  driveFolderId: process.env.DRIVE_FOLDER_ID || "1tf-UAD_36_Wiki_Resources_Placeholder_ID",
+  // Drive source folder for section resources.
+  driveFolderId: process.env.DRIVE_FOLDER_ID || "1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F",
   driveFolderName: "UAD 3.6 Wiki Resources",
-  notebookLmUrl: "https://notebooklm.google.com/notebook/12345-67890-abcdef"
+  // NotebookLM link for the TFAN tool (separate setting from the Drive folder).
+  notebookLmUrl: process.env.NOTEBOOKLM_URL || "https://notebooklm.google.com/notebook/56412ddc-9382-4b7b-8696-83451e44d253"
 };
 
 const DEFAULT_SECTIONS: FAQSection[] = [
@@ -414,10 +416,20 @@ class Database {
     if (!this.data.config) {
       this.data.config = { ...DEFAULT_CONFIG };
     }
-    return this.data.config;
+    // A blank or placeholder stored folder ID must not hide the real one — fall
+    // back to the deploy-time DRIVE_FOLDER_ID so the source link can't vanish.
+    const cfg = this.data.config;
+    if ((!cfg.driveFolderId || cfg.driveFolderId.includes('Placeholder')) && process.env.DRIVE_FOLDER_ID) {
+      cfg.driveFolderId = process.env.DRIVE_FOLDER_ID;
+    }
+    // Heal the old fake NotebookLM placeholder so the TFAN link isn't broken.
+    if (!cfg.notebookLmUrl || cfg.notebookLmUrl.includes('12345-67890')) {
+      cfg.notebookLmUrl = DEFAULT_CONFIG.notebookLmUrl;
+    }
+    return cfg;
   }
 
-  updateConfig(config: { driveFolderId: string, driveFolderName: string, notebookLmUrl: string }, actorEmail: string) {
+  updateConfig(config: Partial<SystemConfig>, actorEmail: string) {
     const oldVal = JSON.stringify(this.data.config);
     // Preserve linked-sheet fields that aren't part of the editable config form.
     this.data.config = { ...this.getConfig(), ...config };
