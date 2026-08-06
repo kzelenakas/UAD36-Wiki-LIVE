@@ -29,7 +29,9 @@ function actor(req: express.Request): string {
 //      hold roles/aiplatform.user.
 //   2. AI Studio API key — fallback if GEMINI_API_KEY is set.
 // If neither is configured, Q&A runs in the rich simulated mode.
-const TFAN_AI_MODEL = process.env.TFAN_AI_MODEL || "gemini-2.0-flash";
+// gemini-2.0-flash is retired (EOL June 2026). gemini-2.5-flash is the current
+// GA Flash model on Vertex; overridable via TFAN_AI_MODEL / _TFAN_AI_MODEL.
+const TFAN_AI_MODEL = process.env.TFAN_AI_MODEL || "gemini-2.5-flash";
 let ai: GoogleGenAI | null = null;
 const useVertex = (process.env.GOOGLE_GENAI_USE_VERTEXAI || "").toLowerCase() === "true";
 try {

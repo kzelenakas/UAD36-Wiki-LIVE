@@ -73,8 +73,11 @@ substitutions:
   # Requires: Vertex AI API enabled + runtime SA has roles/aiplatform.user.
   _USE_VERTEXAI: 'true'
   _VERTEX_LOCATION: 'us-central1'
-  # Override if your Vertex project offers a different/newer Gemini model.
-  _TFAN_AI_MODEL: 'gemini-2.0-flash'
+  # gemini-2.0-flash is RETIRED (EOL June 2026) — do not use it.
+  # gemini-2.5-flash is the current GA Flash model on Vertex (confirmed GA
+  # 2025-06-17). Note: scheduled to sunset 2026-10-16 — bump this to the next
+  # GA Flash (e.g. gemini-3-flash once GA on your Vertex project) before then.
+  _TFAN_AI_MODEL: 'gemini-2.5-flash'
 
 images:
   - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_REPO_NAME}:$COMMIT_SHA'
