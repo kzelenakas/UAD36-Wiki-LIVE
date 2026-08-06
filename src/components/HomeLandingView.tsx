@@ -16,7 +16,8 @@ import {
   Bookmark,
   Users,
   Award,
-  Bot
+  Bot,
+  ExternalLink
 } from 'lucide-react';
 
 interface HomeLandingViewProps {
@@ -26,6 +27,7 @@ interface HomeLandingViewProps {
   totalResources: number;
   totalFaqs: number;
   userRole: string;
+  urarUrl?: string;
 }
 
 export default function HomeLandingView({
@@ -34,7 +36,8 @@ export default function HomeLandingView({
   curriculumModules,
   totalResources,
   totalFaqs,
-  userRole
+  userRole,
+  urarUrl
 }: HomeLandingViewProps) {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10 font-sans">
@@ -50,7 +53,7 @@ export default function HomeLandingView({
             </h1>
 
             <p className="text-sm sm:text-base text-emerald-100/90 leading-relaxed font-normal">
-              Welcome to the centralized reference portal for True Footage staff appraisers navigating Fannie Mae &amp; Freddie Mac UAD 3.6 standards. Access live Google Drive-synced guidelines, interactive FAQ knowledge, and UAD 3.6 TFAN Chat grounded in official appraisal specifications.
+              Welcome to the centralized reference portal for True Footage staff appraisers navigating Fannie Mae &amp; Freddie Mac UAD 3.6 standards. Access live Google Drive-synced guidelines, an interactive URAR field guidance, common UAD FAQ's, and UAD 3.6 TFAN Chat grounded in official appraisal specifications.
             </p>
 
             <div className="flex flex-wrap items-center gap-3 pt-2">
@@ -62,6 +65,19 @@ export default function HomeLandingView({
                 Explore Knowledge Sections
                 <ArrowRight className="h-4 w-4 text-emerald-800" />
               </button>
+
+              {urarUrl && !urarUrl.includes('REPLACE-WITH') && (
+                <a
+                  href={urarUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-5 py-3 bg-emerald-800/90 hover:bg-emerald-800 border border-emerald-700/80 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition cursor-pointer"
+                  title="Opens the interactive URAR field guidance in a new tab"
+                >
+                  <ExternalLink className="h-4 w-4 text-emerald-300" />
+                  Interactive URAR
+                </a>
+              )}
 
               <button
                 onClick={() => onNavigateTab('faqs')}
