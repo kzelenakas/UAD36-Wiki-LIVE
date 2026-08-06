@@ -225,7 +225,11 @@ class Database {
     await initStorage();
 
     const loaded = await loadStore();
-    if (loaded && loaded.resources) {
+    // Seed ONLY when there is no stored document at all (genuine first run).
+    // If a doc exists — even with a missing/empty resources key — use it and
+    // never overwrite it with seed data. This is the guard against wiping real
+    // data on a deploy.
+    if (loaded) {
       this.data = {
         resources: loaded.resources || [],
         faqSections: loaded.faqSections || [],

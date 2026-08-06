@@ -56,12 +56,22 @@ async function tryInitFirestore(): Promise<boolean> {
     const admin = await getAdmin();
     if (!admin) return false;
     firestoreDb = admin.firestore();
-    // Best-effort connectivity check.
-    await firestoreDb.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).get();
-    return true;
+    // Connectivity check with retries — a cold-start blip must NOT drop a
+    // production instance to the ephemeral file store.
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await firestoreDb.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).get();
+        return true;
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) => setTimeout(r, 400 * attempt));
+      }
+    }
+    throw lastErr;
   } catch (e) {
     console.warn(
-      '[storage] Firestore unavailable, falling back to local file store:',
+      '[storage] Firestore unavailable after retries, falling back to local file store:',
       (e as Error).message
     );
     firestoreDb = null;
@@ -74,14 +84,15 @@ export async function initStorage(): Promise<Backend> {
   const forced = (process.env.STORAGE_BACKEND || '').toLowerCase();
   const ok = await tryInitFirestore();
   if (!ok && forced === 'firestore') {
-    // Production forces Firestore so a transient init failure can NEVER silently
-    // fall back to the ephemeral file store. That fallback resets on every deploy
-    // and is what made documents + config look "wiped". Fail loudly instead — the
-    // old revision keeps serving until Firestore is reachable again.
-    throw new Error(
-      'STORAGE_BACKEND=firestore but Firestore could not be initialised. ' +
-      'Refusing to fall back to the ephemeral file store (would lose data on deploy). ' +
-      'Check the runtime service account has roles/datastore.user and the Firestore database exists.'
+    // Firestore was required but couldn't init even after retries. We do NOT
+    // crash (that risks downtime on an autoscale cold-start) and we do NOT touch
+    // Firestore — this instance serves read-mostly on the ephemeral file store
+    // until a later boot reaches Firestore again. Firestore data is untouched, so
+    // nothing is lost; the loud log is the signal to check the SA/database.
+    console.error(
+      '[storage] CRITICAL: STORAGE_BACKEND=firestore but Firestore init failed after retries. ' +
+      'Serving on the ephemeral file store for THIS instance to avoid downtime — Firestore data is NOT modified. ' +
+      'Fix: runtime service account needs roles/datastore.user and the (default) Firestore database must exist.'
     );
   }
   backend = ok ? 'firestore' : 'file';
