@@ -3,25 +3,35 @@ import { Resource, ResourceAnnotation, FAQEntry, UserProfile } from '../types';
 import { FileText, Calendar, Cloud, Bookmark, BookmarkCheck, ArrowLeft, MessageSquare, History, Plus, AlertCircle, Trash2, Eye, ShieldCheck, Share2, Download } from 'lucide-react';
 import { driveEmbedUrl, driveDownloadUrl } from '../lib/driveSync';
 
-// A real Google Drive file id (vs. a local placeholder like "drive-res-1").
-function isRealDriveId(id?: string): boolean {
-  if (!id) return false;
-  return /^[A-Za-z0-9_-]{20,}$/.test(id) && !id.startsWith('drive-') && !id.startsWith('res-');
+// Resolve a real Google Drive/Docs file id from the stored driveFileId OR by
+// parsing it out of the share link. Manually-linked resources keep a
+// placeholder driveFileId and hold the real id only inside webViewLink
+// (e.g. https://drive.google.com/file/d/<ID>/view or .../document/d/<ID>/edit).
+function extractDriveId(resource: Resource): string | null {
+  const id = resource.driveFileId || '';
+  if (/^[A-Za-z0-9_-]{20,}$/.test(id) && !id.startsWith('drive-') && !id.startsWith('res-')) {
+    return id;
+  }
+  const link = resource.webViewLink || '';
+  const dMatch = link.match(/\/d\/([A-Za-z0-9_-]{20,})/); // .../d/<id>/...
+  if (dMatch) return dMatch[1];
+  const idParam = link.match(/[?&]id=([A-Za-z0-9_-]{20,})/); // ...?id=<id>
+  if (idParam) return idParam[1];
+  return null;
 }
 
 // The correct embeddable URL. Real Drive files use the /preview endpoint
-// (the /edit URL Google refuses to embed); pasted links are coerced to
-// /preview when possible so they actually render.
+// (Google refuses to embed the /edit and /view forms). Non-Drive links are
+// coerced to /preview when possible so they actually render.
 function computeEmbedUrl(resource: Resource): string {
-  if (isRealDriveId(resource.driveFileId)) {
-    return driveEmbedUrl(resource.driveFileId, resource.resourceType);
-  }
-  const link = resource.webViewLink || '';
-  return link.replace(/\/edit(\?[^#]*)?(#.*)?$/, '/preview');
+  const id = extractDriveId(resource);
+  if (id) return driveEmbedUrl(id, resource.resourceType);
+  return (resource.webViewLink || '').replace(/\/(edit|view)(\?[^#]*)?(#.*)?$/, '/preview');
 }
 
 function computeDownloadUrl(resource: Resource): string {
-  if (isRealDriveId(resource.driveFileId)) return driveDownloadUrl(resource.driveFileId);
+  const id = extractDriveId(resource);
+  if (id) return driveDownloadUrl(id);
   return resource.webViewLink || '';
 }
 
@@ -302,7 +312,8 @@ export default function ResourceViewer({
                         src={computeEmbedUrl(resource)}
                         title={resource.title}
                         className="w-full flex-1 border-0 bg-white"
-                        sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads"
+                        allow="autoplay"
+                        referrerPolicy="no-referrer-when-downgrade"
                       />
                       <div className="bg-slate-950 px-4 py-2 text-slate-400 text-[11px] flex items-center justify-between">
                         <span>Embedding the live Google Drive document (read-only preview).</span>

@@ -53,8 +53,11 @@ steps:
       # App-level auth (real Google Workspace SSO) is the security gate.
       # The runtime service account must have the "Cloud Datastore User" role
       # for Firestore persistence (see docs/DEPLOYMENT_RUNBOOK.md).
-      - '--set-env-vars'
-      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID},ADMIN_EMAILS=${_ADMIN_EMAILS},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
+      # NOTE: --update-env-vars (not --set-env-vars) so that variables set
+      # outside this pipeline — e.g. GEMINI_API_KEY added via the console or
+      # Secret Manager — are preserved across deploys instead of wiped.
+      - '--update-env-vars'
+      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID},ADMIN_EMAILS=${_ADMIN_EMAILS},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=${_USE_VERTEXAI},VERTEX_LOCATION=${_VERTEX_LOCATION},TFAN_AI_MODEL=${_TFAN_AI_MODEL}'
 
 substitutions:
   _REPO_NAME: 'uad36-wiki'
@@ -66,6 +69,12 @@ substitutions:
   _ADMIN_EMAILS: 'kevin.zelenakas@truefootage.tech'
   # Must be the Firebase project that issues the sign-in ID tokens.
   _FIREBASE_PROJECT_ID: 'uad-36-knowledge-base'
+  # TFAN Q&A via Vertex AI Gemini (service-account auth, no API key).
+  # Requires: Vertex AI API enabled + runtime SA has roles/aiplatform.user.
+  _USE_VERTEXAI: 'true'
+  _VERTEX_LOCATION: 'us-central1'
+  # Override if your Vertex project offers a different/newer Gemini model.
+  _TFAN_AI_MODEL: 'gemini-2.0-flash'
 
 images:
   - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_REPO_NAME}:$COMMIT_SHA'
