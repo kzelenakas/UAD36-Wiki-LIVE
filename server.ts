@@ -568,11 +568,13 @@ PRIMARY KNOWLEDGE SOURCES (NotebookLM Master Vault):
 
   if (activeSources && Array.isArray(activeSources) && activeSources.length > 0) {
     contextText += `\nACTIVE SELECTED TFAN MASTER SOURCES (${activeSources.length} sources enabled):\n`;
-    activeSources.slice(0, 15).forEach((src: string) => {
+    // ponytail: name all active sources (28 short titles is cheap); cap only if
+    // someone links a huge library, to keep the prompt under token limits.
+    activeSources.slice(0, 60).forEach((src: string) => {
       contextText += `• ${src}\n`;
     });
-    if (activeSources.length > 15) {
-      contextText += `• ... and ${activeSources.length - 15} additional active TFAN sources.\n`;
+    if (activeSources.length > 60) {
+      contextText += `• ... and ${activeSources.length - 60} additional active TFAN sources.\n`;
     }
   }
 

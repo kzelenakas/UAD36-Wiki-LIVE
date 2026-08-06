@@ -14,10 +14,15 @@ import ChangelogView from './components/ChangelogView.tsx';
 import AdminConsole from './components/AdminConsole.tsx';
 import AiChatPanel from './components/AiChatPanel.tsx';
 import HomeLandingView from './components/HomeLandingView.tsx';
-import { ShieldCheck, BookOpen, HelpCircle, Sparkles, Settings, LogOut, Menu, X, Lock, Home } from 'lucide-react';
+import { ShieldCheck, BookOpen, HelpCircle, Sparkles, Settings, LogOut, Menu, X, Lock, Home, ExternalLink } from 'lucide-react';
 
 // Attach the Firebase ID token to all /api requests, before any fetch runs.
 installAuthFetch();
+
+// External URAR Interactive Tool (separate GCP project). Opens in its own tab.
+// Set to the tool's URL to show the nav link; empty string hides it.
+// ponytail: a plain constant — one rarely-changing URL, no need for config UI.
+const URAR_TOOL_URL = 'https://REPLACE-WITH-urar-interactive-tool-URL';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(() => {
@@ -230,6 +235,18 @@ export default function App() {
                 <Sparkles className="h-4 w-4" />
                 Changelog
               </button>
+              {URAR_TOOL_URL && !URAR_TOOL_URL.includes('REPLACE-WITH') && (
+                <a
+                  href={URAR_TOOL_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center gap-1.5 text-emerald-100 hover:text-white"
+                  title="Opens the URAR Interactive Tool in a new tab"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  URAR Tool
+                </a>
+              )}
               {user.role === 'admin' && (
                 <button
                   onClick={() => { setCurrentTab('admin'); setSelectedResource(null); }}
@@ -306,6 +323,17 @@ export default function App() {
             >
               Changelog
             </button>
+            {URAR_TOOL_URL && !URAR_TOOL_URL.includes('REPLACE-WITH') && (
+              <a
+                href={URAR_TOOL_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full text-left px-3 py-2 text-xs font-semibold rounded-lg block text-emerald-100 hover:bg-emerald-900"
+              >
+                URAR Tool ↗
+              </a>
+            )}
             {user.role === 'admin' && (
               <button
                 onClick={() => { setCurrentTab('admin'); setSelectedResource(null); setMobileMenuOpen(false); }}
