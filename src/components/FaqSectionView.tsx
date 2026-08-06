@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FAQSection, FAQEntry, SubmittedQuestion, UserProfile, WikiSection, TfanChatLog } from '../types';
+import { getAccessToken, googleSignIn, sendGmail } from '../lib/googleDocsExport';
 import {
   Bot,
   MessageSquare,
@@ -258,7 +259,7 @@ export default function FaqSectionView({
       if (res.ok) {
         setAskQuestionText('');
         setAskCategoryName('');
-        setSubmittedStatusText("Your question has been successfully submitted! Quality specialists will review your ticket shortly.");
+        setSubmittedStatusText("Your question was submitted. A quality specialist will review it and email a response to your True Footage address.");
         onRefreshData();
       }
     } catch (err) {
@@ -268,6 +269,7 @@ export default function FaqSectionView({
 
   const handleRespondQuestion = async (qId: string) => {
     if (!adminResponseText.trim()) return;
+    const q = submittedQuestions.find(x => x.id === qId);
 
     try {
       const res = await fetch(`/api/submitted-questions/${qId}/respond`, {
@@ -280,6 +282,29 @@ export default function FaqSectionView({
       });
 
       if (res.ok) {
+        // Deliver the answer by email to the appraiser (no in-app portal).
+        if (q?.userEmail) {
+          try {
+            let token = getAccessToken();
+            if (!token) token = (await googleSignIn())?.accessToken || null;
+            if (token) {
+              await sendGmail(
+                token,
+                q.userEmail,
+                'Response to your UAD 3.6 inquiry',
+                `Hi ${q.userName || 'there'},\n\n` +
+                `Your question:\n${q.question}\n\n` +
+                `Response from the UAD 3.6 Quality Team:\n${adminResponseText}\n\n` +
+                `— True Footage Quality Development`
+              );
+              alert(`Response emailed to ${q.userEmail}.`);
+            } else {
+              alert('Response saved, but Google sign-in was needed to send the email — please try again.');
+            }
+          } catch (mailErr: any) {
+            alert(`Response saved, but the email failed to send: ${mailErr.message}. (Confirm the Gmail API is enabled for the project.)`);
+          }
+        }
         setAdminResponseText('');
         setAdminResponseId(null);
         onRefreshData();
@@ -838,9 +863,9 @@ export default function FaqSectionView({
               <BadgeHelp className="h-6 w-6" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-800">Ask the UAD 3.6 Quality Team</h3>
+              <h3 className="text-sm font-bold text-slate-800">Ask a Question</h3>
               <p className="text-xs text-slate-500">
-                Can't find an answer in our FAQ or reference documents? Submit a question. Responses land directly in your portal.
+                Can't find it in the FAQ or reference docs? Send us your question — a quality specialist will email you a response at your True Footage address.
               </p>
             </div>
           </div>
@@ -854,7 +879,7 @@ export default function FaqSectionView({
           <form onSubmit={handleAskQuestion} className="space-y-4 font-sans text-slate-800">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                FAQ Category / Topic
+                Topic / Section
               </label>
               <select
                 required
@@ -862,25 +887,28 @@ export default function FaqSectionView({
                 onChange={(e) => setAskCategoryName(e.target.value)}
                 className="w-full p-3 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-700 bg-slate-50/50 text-slate-800 font-medium"
               >
-                <option value="">-- Select FAQ Category --</option>
-                {sections.map(sec => (
-                  <option key={sec.id} value={sec.name}>
-                    {sec.name}
-                  </option>
+                <option value="">-- Select a topic --</option>
+                {/* Source from the wiki sections (always populated) with FAQ
+                    categories as a fallback, so this can never go empty. */}
+                {(curriculumModules.length
+                  ? curriculumModules.map(m => (typeof m === 'string' ? m : m.name))
+                  : sections.map(s => s.name)
+                ).map(name => (
+                  <option key={name} value={name}>{name}</option>
                 ))}
               </select>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                Your appraisal question or conflict report
+                Your UAD 3.6 Inquiry
               </label>
               <textarea
                 required
                 rows={5}
                 value={askQuestionText}
                 onChange={(e) => setAskQuestionText(e.target.value)}
-                placeholder="Detail exactly what data conflict, form layout issue, or rating determination uncertainty you encountered..."
+                placeholder="What's your question? Include the form, field, or scenario it relates to."
                 className="w-full p-3 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-700 bg-slate-50/50"
               />
             </div>
@@ -891,46 +919,10 @@ export default function FaqSectionView({
                 className="bg-emerald-800 hover:bg-emerald-900 text-white px-5 py-2.5 text-xs font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-md"
               >
                 <Send className="h-4 w-4" />
-                Submit appraisal ticket
+                Submit Question
               </button>
             </div>
           </form>
-
-          {/* User's historic questions status tracker */}
-          <div className="mt-8 pt-6 border-t border-slate-100">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Your submitted tickets</h4>
-            
-            {submittedQuestions.filter(q => q.userEmail === user.email).length === 0 ? (
-              <p className="text-xs text-slate-400 italic font-mono">You have no active questions in the quality team queue.</p>
-            ) : (
-              <div className="space-y-3">
-                {submittedQuestions.filter(q => q.userEmail === user.email).map(q => (
-                  <div key={q.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 flex flex-col gap-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-mono text-slate-500">{new Date(q.submittedAt).toLocaleDateString()}</span>
-                      <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                        q.status === 'promoted' ? 'bg-indigo-100 text-indigo-800' :
-                        q.status === 'answered' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
-                      }`}>
-                        {q.status}
-                      </span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-800">Q: {q.question}</p>
-                    {q.adminResponse ? (
-                      <div className="bg-white p-3 rounded-lg border border-slate-100 mt-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Response from Kevin Zelenakas:</span>
-                        <p className="text-xs text-slate-700 leading-relaxed">{q.adminResponse}</p>
-                      </div>
-                    ) : (
-                      <p className="text-[11px] text-slate-500 italic mt-1 flex items-center gap-1.5">
-                        <Clock className="h-3.5 w-3.5" /> Pending quality specialist review.
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       )}
 

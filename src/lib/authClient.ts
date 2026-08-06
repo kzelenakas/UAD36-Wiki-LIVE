@@ -32,6 +32,8 @@ const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive');
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 provider.addScope('https://www.googleapis.com/auth/documents');
+// Send question responses to appraisers by email (admins only use this).
+provider.addScope('https://www.googleapis.com/auth/gmail.send');
 // Hint the Workspace domain and always let the user pick the right account.
 provider.setCustomParameters({ hd: 'truefootage.tech', prompt: 'select_account' });
 

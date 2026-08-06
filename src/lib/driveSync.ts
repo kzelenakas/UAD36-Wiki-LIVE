@@ -99,16 +99,24 @@ export async function scanResourceFolder(
       `'${folder.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`
     );
     const filesRes = await driveGet(
-      `/files?q=${fileQuery}&fields=files(id,name,mimeType,webViewLink,thumbnailLink,modifiedTime,size)&${commonParams}`,
+      `/files?q=${fileQuery}&fields=files(id,name,mimeType,webViewLink,thumbnailLink,modifiedTime,size,shortcutDetails(targetId,targetMimeType))&${commonParams}`,
       accessToken
     );
     for (const f of filesRes.files || []) {
+      // Resolve Drive shortcuts to their target: the shortcut's own id does NOT
+      // open the underlying doc (it 404s in the viewer), so index the target id
+      // and target mime instead, and let the viewer build the embed from them.
+      const isShortcut = f.mimeType === 'application/vnd.google-apps.shortcut';
+      const realId = isShortcut ? (f.shortcutDetails?.targetId || f.id) : f.id;
+      const realMime = isShortcut ? (f.shortcutDetails?.targetMimeType || '') : (f.mimeType || '');
       discovered.push({
-        driveFileId: f.id,
+        driveFileId: realId,
         title: f.name,
-        resourceType: mimeToType(f.mimeType || ''),
+        resourceType: mimeToType(realMime),
         moduleTags: [matchedSection],
-        webViewLink: f.webViewLink,
+        // For shortcuts, drop the shortcut's own link so the viewer builds the
+        // embed from the resolved target id + type.
+        webViewLink: isShortcut ? undefined : f.webViewLink,
         thumbnailLink: f.thumbnailLink,
         size: humanSize(f.size),
         driveLastModified: f.modifiedTime,

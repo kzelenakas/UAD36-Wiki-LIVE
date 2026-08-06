@@ -2,6 +2,47 @@
 // Re-exported here for backward compatibility with existing imports.
 export { googleSignIn, getAccessToken } from './authClient';
 
+/**
+ * Send a plain-text email via the Gmail API using the signed-in admin's OAuth
+ * token. Used to deliver question responses to the appraiser's inbox instead of
+ * an in-app portal. Requires the gmail.send scope (see authClient) and the
+ * Gmail API enabled on the project. Sends from the admin's own address.
+ */
+export async function sendGmail(
+  accessToken: string,
+  to: string,
+  subject: string,
+  bodyText: string
+): Promise<void> {
+  const mime = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    '',
+    bodyText
+  ].join('\r\n');
+  // base64url-encode the RFC 2822 message (UTF-8 safe).
+  const raw = btoa(unescape(encodeURIComponent(mime)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  const res = await fetch(
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ raw })
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Gmail send failed (${res.status})`);
+  }
+}
+
 export interface QdtOutlineData {
   title: string;
   sections: string[];
@@ -135,7 +176,7 @@ ${QDT_OUTLINE_CONTENT.features.map((f, idx) => `  ${idx + 1}. ${f.name}\n     ${
 export async function createDriveSectionSubfolders(
   accessToken: string,
   parentFolderId?: string
-): Promise<{ folderName: string; folderId: string; created: boolean; fallbackToRoot?: boolean; error?: string }[]> {
+): Promise<{ folderName: string; folderId: string; created: boolean; existed?: boolean; fallbackToRoot?: boolean; error?: string }[]> {
   const sectionFolderNames = [
     "UAD 3.6 Crosswalk Playbook",
     "Form Layouts & Uniform Reporting",
@@ -149,7 +190,7 @@ export async function createDriveSectionSubfolders(
     "TF Formfiller"
   ];
 
-  const results: { folderName: string; folderId: string; created: boolean; fallbackToRoot?: boolean; error?: string }[] = [];
+  const results: { folderName: string; folderId: string; created: boolean; existed?: boolean; fallbackToRoot?: boolean; error?: string }[] = [];
 
   for (const name of sectionFolderNames) {
     const bodyData: any = {
@@ -161,6 +202,27 @@ export async function createDriveSectionSubfolders(
     }
 
     try {
+      // Safeguard against duplicates: if a same-named subfolder already exists
+      // under the parent, reuse it instead of creating another one. (Drive
+      // happily creates multiple folders with the same name, so re-running this
+      // without the check is what produced the duplicates.)
+      if (parentFolderId && parentFolderId.trim() !== "") {
+        const q = encodeURIComponent(
+          `'${parentFolderId.trim()}' in parents and name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
+        );
+        const findRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (findRes.ok) {
+          const found = await findRes.json();
+          if (found.files && found.files.length > 0) {
+            results.push({ folderName: name, folderId: found.files[0].id, created: false, existed: true });
+            continue;
+          }
+        }
+      }
+
       let res = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", {
         method: "POST",
         headers: {

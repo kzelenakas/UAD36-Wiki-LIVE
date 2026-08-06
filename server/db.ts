@@ -246,6 +246,13 @@ class Database {
         this.data.modules = DEFAULT_WIKI_SECTIONS;
         updated = true;
       }
+      // Restore the original FAQ categories if an earlier reset left them empty.
+      // Additive only (fires when there are zero categories), so it never
+      // overwrites categories an admin has created.
+      if (!this.data.faqSections || this.data.faqSections.length === 0) {
+        this.data.faqSections = DEFAULT_SECTIONS;
+        updated = true;
+      }
       if (!this.data.config) {
         this.data.config = { ...DEFAULT_CONFIG };
         updated = true;
