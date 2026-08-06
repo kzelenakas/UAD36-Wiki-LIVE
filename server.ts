@@ -505,9 +505,12 @@ app.post("/api/sync/drive-index", requireAdmin, (req, res) => {
   const email = actor(req);
   let created = 0;
   let updated = 0;
+  let removed = 0;
+  const scannedIds = new Set<string>();
 
   for (const f of files) {
     if (!f || !f.driveFileId || !f.title) continue;
+    scannedIds.add(f.driveFileId);
     const existing = db.getResource(f.driveFileId);
     const payload = {
       driveFileId: f.driveFileId,
@@ -519,6 +522,7 @@ app.post("/api/sync/drive-index", requireAdmin, (req, res) => {
       publishStatus: "published" as const,
       webViewLink: f.webViewLink,
       size: f.size,
+      syncedFromDrive: true,
       lastSyncedRevisionId: f.lastSyncedRevisionId || `rev-${Date.now()}`
     };
     if (existing) {
@@ -530,7 +534,30 @@ app.post("/api/sync/drive-index", requireAdmin, (req, res) => {
     }
   }
 
-  res.json({ message: `Drive sync complete: ${created} added, ${updated} updated.`, created, updated, resources: db.getResources() });
+  // Mirror Drive → Wiki: prune previously-synced resources that are no longer in
+  // the folder (deleted/moved in Drive, or stale entries keyed by an old id — e.g.
+  // pre-shortcut-resolution duplicates). This is what makes the Wiki reflect Drive
+  // and removes duplicates automatically. Manually-added resources (not
+  // syncedFromDrive) are never touched.
+  // Safety: only prune when the scan actually returned files, so a transient/empty
+  // scan can't wipe the section.
+  if (files.length > 0) {
+    const orphans = db.getResources().filter(r => {
+      const isSynced = r.syncedFromDrive === true ||
+        (r.description || "").startsWith("Synced from Google Drive");
+      return isSynced && r.driveFileId && !scannedIds.has(r.driveFileId);
+    });
+    for (const o of orphans) {
+      db.deleteResource(o.id, email);
+      removed++;
+    }
+  }
+
+  res.json({
+    message: `Drive sync complete: ${created} added, ${updated} updated, ${removed} removed (mirrored from Drive).`,
+    created, updated, removed,
+    resources: db.getResources()
+  });
 });
 
 // NotebookLM Q&A Proxy Endpoint

@@ -33,6 +33,7 @@ export interface Resource {
   thumbnailLink?: string; // Preview thumbnail if available
   size?: string; // File size string
   order?: number; // Sorting order
+  syncedFromDrive?: boolean; // true if created by a Drive folder sync (prunable on mirror)
 }
 
 export interface FAQSection {

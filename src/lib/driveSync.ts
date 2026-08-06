@@ -145,6 +145,53 @@ export function driveDownloadUrl(driveFileId: string): string {
   return `https://drive.google.com/uc?export=download&id=${driveFileId}`;
 }
 
+export interface LinkHealthResult {
+  id: string;
+  title: string;
+  section: string;
+  reachable: boolean;
+  status: number;
+  webViewLink?: string;
+}
+
+/**
+ * Link-health check: for each resource with a real Drive file id, do a cheap
+ * metadata GET with the signed-in admin's token. reachable=false (403/404) means
+ * the source was un-shared, moved, or deleted — surface it so the owner can fix.
+ */
+export async function checkLinkHealth(
+  accessToken: string,
+  resources: { id: string; driveFileId: string; title: string; moduleTags?: string[]; webViewLink?: string }[]
+): Promise<LinkHealthResult[]> {
+  const out: LinkHealthResult[] = [];
+  for (const r of resources) {
+    const id = r.driveFileId || '';
+    // Skip manual/placeholder resources that aren't backed by a real Drive id.
+    if (!/^[A-Za-z0-9_-]{20,}$/.test(id) || id.startsWith('res-') || id.startsWith('drive-')) continue;
+    let reachable = false;
+    let status = 0;
+    try {
+      const res = await fetch(
+        `${DRIVE_API}/files/${id}?fields=id&supportsAllDrives=true`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      status = res.status;
+      reachable = res.ok;
+    } catch {
+      reachable = false;
+    }
+    out.push({
+      id: r.id,
+      title: r.title,
+      section: (r.moduleTags && r.moduleTags[0]) || '',
+      reachable,
+      status,
+      webViewLink: r.webViewLink
+    });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Linked Google Sheet export (#8)
 // ---------------------------------------------------------------------------

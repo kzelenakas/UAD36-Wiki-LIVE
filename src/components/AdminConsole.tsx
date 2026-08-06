@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AuditLog, Resource, FAQSection, WikiSection, SystemConfig } from '../types';
 import { googleSignIn, getAccessToken, createDriveSectionSubfolders } from '../lib/googleDocsExport';
-import { scanResourceFolder, exportLogSheet } from '../lib/driveSync';
+import { scanResourceFolder, exportLogSheet, checkLinkHealth } from '../lib/driveSync';
 import {
   Database,
   Plus,
@@ -53,12 +53,9 @@ export default function AdminConsole({
   const [activeTab, setActiveTab] = useState<'sync' | 'modules' | 'reorder' | 'config' | 'logs'>('sync');
 
   // Webhook Simulator State
-  const [webhookAction, setWebhookAction] = useState<'create' | 'delete'>('create');
-  const [webhookTitle, setWebhookTitle] = useState('');
-  const [webhookType, setWebhookType] = useState<'doc' | 'sheet' | 'slide' | 'pdf' | 'video'>('doc');
-  const [webhookModule, setWebhookModule] = useState('');
-  const [hookLoading, setHookLoading] = useState(false);
-  const [hookMessage, setHookMessage] = useState<string | null>(null);
+  // Link-health check state (flags resources whose Drive source is unreachable)
+  const [linkHealth, setLinkHealth] = useState<{ id: string; title: string; section: string; reachable: boolean; status: number; webViewLink?: string }[] | null>(null);
+  const [linkHealthLoading, setLinkHealthLoading] = useState(false);
 
   // Manual Resource creator State
   const [manualTitle, setManualTitle] = useState('');
@@ -270,9 +267,6 @@ export default function AdminConsole({
   useEffect(() => {
     const moduleNames = curriculumModules.map(m => typeof m === 'string' ? m : m.name);
     if (moduleNames.length > 0) {
-      if (!webhookModule || !moduleNames.includes(webhookModule)) {
-        setWebhookModule(moduleNames[0]);
-      }
       if (!manualModule || !moduleNames.includes(manualModule)) {
         setManualModule(moduleNames[0]);
       }
@@ -292,38 +286,24 @@ export default function AdminConsole({
     }
   }, [systemConfig]);
 
-  const handleTriggerWebhook = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!webhookTitle.trim()) return;
-
-    setHookLoading(true);
-    setHookMessage(null);
-
+  // Link-health check: verify each synced resource's Drive source is still
+  // reachable by the signed-in admin. Broken links are surfaced so the owning
+  // contributor can re-share/restore the source (fits the links-not-copies model).
+  const handleLinkHealthCheck = async () => {
+    setLinkHealthLoading(true);
+    setLinkHealth(null);
     try {
-      const res = await fetch('/api/sync/drive-trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: webhookAction,
-          title: webhookTitle,
-          fileType: webhookType,
-          moduleTag: webhookModule,
-          actorEmail: userEmail
-        })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setHookMessage(data.message);
-        setWebhookTitle('');
-        onRefreshData();
-      } else {
-        throw new Error(data.error);
+      const token = await ensureToken();
+      if (!token) {
+        setLinkHealthLoading(false);
+        return; // user cancelled sign-in
       }
+      const results = await checkLinkHealth(token, resources);
+      setLinkHealth(results);
     } catch (err: any) {
-      setHookMessage(`Sync Error: ${err.message}`);
+      alert(`Link health check failed: ${err.message || err}`);
     } finally {
-      setHookLoading(false);
+      setLinkHealthLoading(false);
     }
   };
 
@@ -670,90 +650,88 @@ export default function AdminConsole({
             </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Offline Drive sandbox (manual placeholder records) */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
-              <div>
-                <div className="flex items-center gap-2 mb-2 border-b pb-2 border-slate-100">
-                  <RefreshCw className="h-5 w-5 text-slate-500" />
-                  <h3 className="text-sm font-bold text-slate-800">Drive Sync Sandbox (testing only)</h3>
+            {/* Live Google Drive folder view (replaces the old offline sandbox) */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col">
+              <div className="flex items-center justify-between gap-2 mb-2 border-b pb-2 border-slate-100">
+                <div className="flex items-center gap-2">
+                  <FolderSync className="h-5 w-5 text-emerald-800" />
+                  <h3 className="text-sm font-bold text-slate-800">Live Google Drive Folder</h3>
                 </div>
-                <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                  For demos/offline testing only. This adds a <span className="font-semibold">placeholder</span> record without touching Google Drive — use <span className="font-semibold">Sync from Google Drive</span> above for real files.
-                </p>
-
-                {hookMessage && (
-                  <div className={`p-3.5 rounded-xl border mb-4 text-xs font-mono leading-relaxed break-words ${
-                    hookMessage.startsWith('Sync Error') ? 'bg-red-50 border-red-100 text-red-800' : 'bg-emerald-50 border-emerald-100 text-emerald-800'
-                  }`}>
-                    {hookMessage}
-                  </div>
-                )}
-
-                <form onSubmit={handleTriggerWebhook} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Drive Action</label>
-                      <select
-                        value={webhookAction}
-                        onChange={(e) => setWebhookAction(e.target.value as any)}
-                        className="w-full p-2 border border-slate-200 rounded-xl text-xs bg-slate-50 text-slate-800 font-medium"
-                      >
-                        <option value="create">Drop New File / Update File</option>
-                        <option value="delete">Delete File from Drive</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Asset Module Tag</label>
-                      <select
-                        value={webhookModule}
-                        onChange={(e) => setWebhookModule(e.target.value)}
-                        className="w-full p-2 border border-slate-200 rounded-xl text-xs bg-slate-50 text-slate-800 font-medium"
-                      >
-                        {curriculumModules.map(m => {
-                          const name = typeof m === 'string' ? m : m.name;
-                          return <option key={name} value={name}>{name}</option>;
-                        })}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">File Name (no ext)</label>
-                      <input
-                        type="text"
-                        required
-                        value={webhookTitle}
-                        onChange={(e) => setWebhookTitle(e.target.value)}
-                        placeholder="e.g., condition_calibration_C4"
-                        className="w-full p-2 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-emerald-800"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">File Type</label>
-                      <select
-                        value={webhookType}
-                        onChange={(e) => setWebhookType(e.target.value as any)}
-                        className="w-full p-2 border border-slate-200 rounded-xl text-xs bg-slate-50 text-slate-800 font-medium"
-                      >
-                        <option value="doc">Word Doc</option>
-                        <option value="sheet">Excel Sheet</option>
-                        <option value="slide">PowerPoint</option>
-                        <option value="pdf">PDF File</option>
-                        <option value="video">MP4 Video</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={hookLoading}
-                    className="w-full bg-emerald-800 hover:bg-emerald-950 text-white py-2.5 rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
+                {driveFolderId && (
+                  <a
+                    href={`https://drive.google.com/drive/folders/${driveFolderId.trim()}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] font-bold text-emerald-700 hover:underline flex items-center gap-1 shrink-0"
                   >
-                    {hookLoading ? "Simulating Drive Callback..." : "Trigger Drive Sync Webhook"}
-                  </button>
-                </form>
+                    Open in Drive <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
               </div>
+              <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+                Live view of the resource folder and its section subfolders. Add, rename, or remove files here in Drive, then click <span className="font-semibold">Sync from Google Drive</span> above — the Wiki mirrors this folder (new files added, removed files pruned, duplicates collapsed to the current version).
+              </p>
+              {driveFolderId ? (
+                <iframe
+                  title="Google Drive resource folder"
+                  src={`https://drive.google.com/embeddedfolderview?id=${driveFolderId.trim()}#grid`}
+                  className="w-full flex-1 min-h-[360px] border border-slate-200 rounded-xl bg-white"
+                />
+              ) : (
+                <p className="text-xs text-slate-400 italic">
+                  Set the resource folder ID in System Configuration to view it here.
+                </p>
+              )}
+            </div>
+
+            {/* Link Health check */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col">
+              <div className="flex items-center justify-between gap-2 mb-2 border-b pb-2 border-slate-100">
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-5 w-5 text-emerald-800" />
+                  <h3 className="text-sm font-bold text-slate-800">Link Health</h3>
+                </div>
+                <button
+                  onClick={handleLinkHealthCheck}
+                  disabled={linkHealthLoading}
+                  className="text-[11px] font-bold text-white bg-emerald-800 hover:bg-emerald-900 px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${linkHealthLoading ? 'animate-spin' : ''}`} />
+                  {linkHealthLoading ? 'Checking…' : 'Check links'}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+                Verifies every linked resource still opens for you in Drive. Broken links usually mean the source doc was un-shared, moved, or deleted by its owner — fix it at the source, then re-sync.
+              </p>
+              {linkHealth && (() => {
+                const broken = linkHealth.filter(x => !x.reachable);
+                if (linkHealth.length === 0) return <p className="text-xs text-slate-400 italic">No linked Drive resources to check.</p>;
+                if (broken.length === 0) return (
+                  <div className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-xl p-3 flex items-center gap-2">
+                    <Check className="h-4 w-4" /> All {linkHealth.length} linked resources are reachable.
+                  </div>
+                );
+                return (
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                    <div className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4" /> {broken.length} of {linkHealth.length} link{broken.length === 1 ? '' : 's'} broken
+                    </div>
+                    {broken.map(b => (
+                      <div key={b.id} className="p-3 rounded-xl border border-amber-100 bg-amber-50/60 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{b.title}</p>
+                          <p className="text-[10px] text-slate-500">{b.section || 'General'} · HTTP {b.status || 'error'}</p>
+                        </div>
+                        {b.webViewLink && (
+                          <a href={b.webViewLink} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-emerald-700 hover:underline flex items-center gap-0.5 shrink-0">
+                            Open <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Manual Resource Registrant */}
