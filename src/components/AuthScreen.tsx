@@ -1,56 +1,69 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
-import { ShieldCheck, Mail, User, AlertCircle, KeyRound } from 'lucide-react';
+import { ShieldCheck, AlertCircle, LogIn } from 'lucide-react';
+import { googleSignIn } from '../lib/authClient';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: UserProfile) => void;
 }
 
 export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
-  const [email, setEmail] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Verify the signed-in identity with our server (server checks the Firebase
+  // ID token, the Workspace domain, and the admin allowlist) and hydrate the
+  // app profile.
+  const completeServerLogin = async () => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Authentication failed');
+    onLoginSuccess(data.user);
+  };
+
+  const handleGoogleSignIn = async () => {
     setError(null);
-
-    if (!email) {
-      setError("Email address is required.");
-      return;
-    }
-
     setIsLoading(true);
-
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, displayName })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Authentication failed");
-      }
-
-      onLoginSuccess(data.user);
+      const result = await googleSignIn();
+      if (!result) throw new Error('Google sign-in was cancelled.');
+      await completeServerLogin();
     } catch (err: any) {
-      setError(err.message);
+      if (err?.code === 'auth/popup-closed-by-user') {
+        setError('Sign-in was cancelled. Please try again.');
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        setError(
+          'This domain is not yet authorized for Google sign-in. An administrator must add it under Firebase Authentication > Settings > Authorized domains.'
+        );
+      } else {
+        setError(err.message || 'Sign-in failed.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const setDemoUser = (type: 'staff' | 'admin') => {
-    if (type === 'admin') {
-      setEmail('kevin.zelenakas@truefootage.tech');
-      setDisplayName('Kevin Zelenakas');
-    } else {
-      setEmail('appraiser.field@truefootage.tech');
-      setDisplayName('Marcus Ramirez');
+  // Dev-only convenience: works ONLY when the server has DEV_AUTH=true.
+  const handleDevLogin = async () => {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-dev-email': 'kevin.zelenakas@truefootage.tech' },
+        body: JSON.stringify({ devEmail: 'kevin.zelenakas@truefootage.tech' })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Dev login unavailable (server DEV_AUTH is off).');
+      onLoginSuccess(data.user);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -72,103 +85,50 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow-xl sm:rounded-2xl sm:px-10 border border-slate-100">
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            {error && (
-              <div className="rounded-xl bg-red-50 p-4 border border-red-100">
-                <div className="flex">
-                  <div className="flex-shrink-0">
-                    <AlertCircle className="h-5 w-5 text-red-600" />
-                  </div>
-                  <div className="ml-3">
-                    <h3 className="text-sm font-medium text-red-800">Login Restricted</h3>
-                    <div className="mt-2 text-xs text-red-700 leading-relaxed">
-                      {error}
-                    </div>
-                  </div>
+          {error && (
+            <div className="rounded-xl bg-red-50 p-4 border border-red-100 mb-6">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-sm font-medium text-red-800">Sign-in Notice</h3>
+                  <div className="mt-2 text-xs text-red-700 leading-relaxed">{error}</div>
                 </div>
               </div>
-            )}
-
-            <div>
-              <label htmlFor="email" className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                Workspace Email Address
-              </label>
-              <div className="mt-1 relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-slate-400" />
-                </div>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@truefootage.tech"
-                  className="block w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-700 focus:border-emerald-700 bg-slate-50/50"
-                />
-              </div>
-              <p className="mt-1.5 text-xs text-slate-500">
-                Must belong to authorized Google Workspace domain.
-              </p>
             </div>
+          )}
 
-            <div>
-              <label htmlFor="name" className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                Full Name (Optional)
-              </label>
-              <div className="mt-1 relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <User className="h-5 w-5 text-slate-400" />
-                </div>
-                <input
-                  id="name"
-                  name="name"
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="e.g., Jane Doe"
-                  className="block w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-700 focus:border-emerald-700 bg-slate-50/50"
-                />
-              </div>
-            </div>
+          <p className="text-sm text-slate-600 mb-6 leading-relaxed text-center">
+            Access is restricted to verified <span className="font-semibold">@truefootage.tech</span> Google
+            Workspace accounts. Sign in with Google to continue.
+          </p>
 
-            <div>
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={isLoading}
+            className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-700 disabled:opacity-50 transition-all duration-150 cursor-pointer"
+          >
+            <LogIn className="h-4.5 w-4.5" />
+            {isLoading ? 'Verifying with Google…' : 'Sign in with Google Workspace'}
+          </button>
+
+          <p className="mt-4 text-center text-[11px] text-slate-400 leading-relaxed">
+            Your identity is verified by Google and your organization. True Footage never sees your password.
+          </p>
+
+          {(import.meta as any).env?.DEV && (
+            <div className="mt-6 border-t border-slate-100 pt-4">
               <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-700 disabled:opacity-50 transition-all duration-150 cursor-pointer"
+                type="button"
+                onClick={handleDevLogin}
+                className="w-full text-[11px] text-slate-400 hover:text-slate-600 font-mono cursor-pointer"
               >
-                {isLoading ? "Signing in via SSO..." : "Sign in with Google Workspace"}
+                Dev login (requires server DEV_AUTH=true)
               </button>
             </div>
-          </form>
-
-          <div className="mt-8 border-t border-slate-100 pt-6">
-            <div className="text-center">
-              <span className="px-2 bg-white text-xs font-semibold uppercase tracking-wider text-slate-500">
-                On-Click Demonstration Presets
-              </span>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => setDemoUser('staff')}
-                className="flex items-center justify-center gap-2 py-2.5 px-4 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                <User className="h-4 w-4 text-emerald-700" />
-                Staff Appraiser
-              </button>
-              <button
-                onClick={() => setDemoUser('admin')}
-                className="flex items-center justify-center gap-2 py-2.5 px-4 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                <KeyRound className="h-4 w-4 text-amber-700" />
-                Quality Admin
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

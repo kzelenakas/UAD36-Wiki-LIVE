@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "./server/db.js"; // note: we can import directly or through path since tsx resolves types
+import { requireAuth, requireAdmin, resolveUser, ALLOWED_DOMAIN, DEV_AUTH } from "./server/auth.js";
 
 dotenv.config();
 
@@ -12,6 +13,14 @@ const app = express();
 const PORT = Number(process.env.PORT) || 8080;
 
 app.use(express.json());
+
+/** The verified actor for an authenticated request. Falls back to a system
+ *  label rather than trusting a client-supplied email (prevents audit-log
+ *  spoofing). */
+function actor(req: express.Request): string {
+  const u = (req as any).authUser;
+  return (u && u.email) || "system@truefootage.tech";
+}
 
 // Initialize Gemini Client safely
 let ai: GoogleGenAI | null = null;
@@ -37,42 +46,38 @@ if (process.env.GEMINI_API_KEY) {
 // API ROUTES FIRST
 // -------------------------------------------------------------
 
-// Auth simulator
-app.post("/api/auth/login", (req, res) => {
-  const { email, displayName } = req.body;
-  if (!email || !email.includes("@")) {
-    return res.status(400).json({ error: "A valid email address is required" });
-  }
-
-  const allowedDomain = process.env.ALLOWED_DOMAIN || "truefootage.tech";
-  const domain = email.split("@")[1];
-
-  if (domain.toLowerCase() !== allowedDomain.toLowerCase() && !email.endsWith("admin@truefootage.tech") && !email.endsWith("kevin.zelenakas@truefootage.tech")) {
+// Auth: verify a real Firebase Google Workspace identity (issue #2).
+// The client sends the Firebase ID token as `Authorization: Bearer <token>`.
+// We cryptographically verify it, confirm the Workspace domain, and derive the
+// role from an explicit allowlist. No password guessing, no "admin" backdoor.
+app.post("/api/auth/login", async (req, res) => {
+  const user = await resolveUser(req);
+  if (!user) {
     return res.status(403).json({
-      error: `Access Denied: Logins are restricted to verified accounts on the Google Workspace domain '@${allowedDomain}'.`
+      error: `Access denied. Sign in with a verified @${ALLOWED_DOMAIN} Google Workspace account.`
     });
   }
-
-  // Set roles. Custom provision for specific users
-  const isAdmin = email.includes("admin") || email.includes("kevin.zelenakas");
-  const userProfile = {
-    uid: `usr-${Date.now()}`,
-    email,
-    displayName: displayName || email.split("@")[0],
-    role: isAdmin ? "admin" : "staff",
-    domain
-  };
-
-  res.json({ user: userProfile });
+  res.json({
+    user: {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      role: user.role,
+      domain: user.domain
+    }
+  });
 });
+
+// Everything below this line requires an authenticated Workspace user.
+app.use("/api", requireAuth);
 
 // Resources
 app.get("/api/resources", (req, res) => {
   res.json({ resources: db.getResources() });
 });
 
-app.post("/api/resources", (req, res) => {
-  const { title, resourceType, moduleTags, description, driveFileId, webViewLink, size, actorEmail } = req.body;
+app.post("/api/resources", requireAdmin, (req, res) => {
+  const { title, resourceType, moduleTags, description, driveFileId, webViewLink, size } = req.body;
   if (!title || !resourceType || !moduleTags || !moduleTags.length) {
     return res.status(400).json({ error: "Missing required resource properties (title, resourceType, moduleTags)" });
   }
@@ -88,15 +93,15 @@ app.post("/api/resources", (req, res) => {
     publishStatus: "published",
     webViewLink: webViewLink || "https://docs.google.com/document/d/1_Preview/edit",
     size: size || "100 KB"
-  }, actorEmail || "admin@truefootage.tech");
+  }, actor(req));
 
   res.status(201).json({ resource: newResource });
 });
 
-app.put("/api/resources/:id", (req, res) => {
+app.put("/api/resources/:id", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { title, resourceType, moduleTags, description, publishStatus, webViewLink, size, actorEmail } = req.body;
-  
+  const { title, resourceType, moduleTags, description, publishStatus, webViewLink, size } = req.body;
+
   try {
     const updated = db.updateResource(id, {
       ...(title && { title }),
@@ -107,22 +112,31 @@ app.put("/api/resources/:id", (req, res) => {
       ...(webViewLink && { webViewLink }),
       ...(size && { size }),
       driveLastModified: new Date().toISOString()
-    }, actorEmail || "admin@truefootage.tech");
+    }, actor(req));
     res.json({ resource: updated });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
   }
 });
 
-app.delete("/api/resources/:id", (req, res) => {
+app.delete("/api/resources/:id", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { actorEmail } = req.body;
   try {
-    db.deleteResource(id, actorEmail || "admin@truefootage.tech");
+    db.deleteResource(id, actor(req));
     res.json({ success: true });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
   }
+});
+
+// Resources Reordering
+app.put("/api/resources/reorder", requireAdmin, (req, res) => {
+  const { orders } = req.body; // Array of { id, order }
+  if (!orders || !Array.isArray(orders)) {
+    return res.status(400).json({ error: "Orders array is required" });
+  }
+  const resources = db.updateResourcesOrder(orders, actor(req));
+  res.json({ resources });
 });
 
 // FAQ Sections
@@ -130,37 +144,36 @@ app.get("/api/faq/sections", (req, res) => {
   res.json({ sections: db.getFaqSections() });
 });
 
-app.post("/api/faq/sections", (req, res) => {
-  const { name, actorEmail } = req.body;
+app.post("/api/faq/sections", requireAdmin, (req, res) => {
+  const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Section name is required" });
-  const section = db.createFaqSection(name, actorEmail || "admin@truefootage.tech");
+  const section = db.createFaqSection(name, actor(req));
   res.status(201).json({ section });
 });
 
-app.put("/api/faq/sections/reorder", (req, res) => {
-  const { orders, actorEmail } = req.body; // Array of { id, order }
+app.put("/api/faq/sections/reorder", requireAdmin, (req, res) => {
+  const { orders } = req.body; // Array of { id, order }
   if (!orders || !Array.isArray(orders)) return res.status(400).json({ error: "Orders array is required" });
-  const sections = db.updateFaqSectionOrder(orders, actorEmail || "admin@truefootage.tech");
+  const sections = db.updateFaqSectionOrder(orders, actor(req));
   res.json({ sections });
 });
 
-app.put("/api/faq/sections/:id", (req, res) => {
+app.put("/api/faq/sections/:id", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { name, actorEmail } = req.body;
+  const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Section name is required" });
   try {
-    const section = db.updateFaqSection(id, name, actorEmail || "admin@truefootage.tech");
+    const section = db.updateFaqSection(id, name, actor(req));
     res.json({ section });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
   }
 });
 
-app.delete("/api/faq/sections/:id", (req, res) => {
+app.delete("/api/faq/sections/:id", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { actorEmail } = req.body;
   try {
-    db.deleteFaqSection(id, actorEmail || "admin@truefootage.tech");
+    db.deleteFaqSection(id, actor(req));
     res.json({ success: true });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
@@ -172,8 +185,8 @@ app.get("/api/faq/entries", (req, res) => {
   res.json({ entries: db.getFaqEntries() });
 });
 
-app.post("/api/faq/entries", (req, res) => {
-  const { sectionId, question, answer, status, moduleTags, actorEmail } = req.body;
+app.post("/api/faq/entries", requireAdmin, (req, res) => {
+  const { sectionId, question, answer, status, moduleTags } = req.body;
   if (!sectionId || !question || !answer) {
     return res.status(400).json({ error: "Missing required properties (sectionId, question, answer)" });
   }
@@ -183,13 +196,13 @@ app.post("/api/faq/entries", (req, res) => {
     answer,
     status: status || "draft",
     moduleTags: moduleTags || []
-  }, actorEmail || "admin@truefootage.tech");
+  }, actor(req));
   res.status(201).json({ entry });
 });
 
-app.put("/api/faq/entries/:id", (req, res) => {
+app.put("/api/faq/entries/:id", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { sectionId, question, answer, status, moduleTags, actorEmail, note } = req.body;
+  const { sectionId, question, answer, status, moduleTags, note } = req.body;
   try {
     const updated = db.updateFaqEntry(id, {
       ...(sectionId && { sectionId }),
@@ -197,55 +210,62 @@ app.put("/api/faq/entries/:id", (req, res) => {
       ...(answer && { answer }),
       ...(status && { status }),
       ...(moduleTags && { moduleTags })
-    }, actorEmail || "admin@truefootage.tech", note);
+    }, actor(req), note);
     res.json({ entry: updated });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
   }
 });
 
-app.delete("/api/faq/entries/:id", (req, res) => {
+app.delete("/api/faq/entries/:id", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { actorEmail } = req.body;
   try {
-    db.deleteFaqEntry(id, actorEmail || "admin@truefootage.tech");
+    db.deleteFaqEntry(id, actor(req));
     res.json({ success: true });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
   }
 });
 
-// Submitted Questions Queue
-app.get("/api/submitted-questions", (req, res) => {
+// Submitted Questions Queue (FAQ Review queue).
+// Staff may submit; only admins may list/respond/promote.
+app.get("/api/submitted-questions", requireAdmin, (req, res) => {
   res.json({ questions: db.getSubmittedQuestions() });
 });
 
 app.post("/api/submitted-questions", (req, res) => {
-  const { question, userId, userEmail, userName, categoryName } = req.body;
-  if (!question || !userEmail) {
-    return res.status(400).json({ error: "Question text and user email are required" });
+  const { question, categoryName } = req.body;
+  const user = (req as any).authUser;
+  if (!question) {
+    return res.status(400).json({ error: "Question text is required" });
   }
-  const newQ = db.createSubmittedQuestion(question, userId || `usr-${Date.now()}`, userEmail, userName || "Staff Appraiser", categoryName);
+  const newQ = db.createSubmittedQuestion(
+    question,
+    user.uid,
+    user.email,
+    user.displayName || "Staff Appraiser",
+    categoryName
+  );
   res.status(201).json({ question: newQ });
 });
 
-app.put("/api/submitted-questions/:id/respond", (req, res) => {
+app.put("/api/submitted-questions/:id/respond", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { adminResponse, actorEmail } = req.body;
+  const { adminResponse } = req.body;
   if (!adminResponse) return res.status(400).json({ error: "Admin response is required" });
   try {
-    const updated = db.respondToSubmittedQuestion(id, adminResponse, actorEmail || "admin@truefootage.tech");
+    const updated = db.respondToSubmittedQuestion(id, adminResponse, actor(req));
     res.json({ question: updated });
   } catch (error: any) {
     res.status(404).json({ error: error.message });
   }
 });
 
-app.put("/api/submitted-questions/:id/promote", (req, res) => {
+app.put("/api/submitted-questions/:id/promote", requireAdmin, (req, res) => {
   const { id } = req.params;
-  const { sectionId, actorEmail } = req.body;
+  const { sectionId } = req.body;
   if (!sectionId) return res.status(400).json({ error: "FAQ section ID is required to promote" });
-  
+
   try {
     const submitted = db.getSubmittedQuestions().find(q => q.id === id);
     if (!submitted) return res.status(404).json({ error: "Submitted question not found" });
@@ -257,10 +277,10 @@ app.put("/api/submitted-questions/:id/promote", (req, res) => {
       answer: submitted.adminResponse || "This question is currently under review by our Quality team.",
       status: "draft",
       moduleTags: []
-    }, actorEmail || "admin@truefootage.tech");
+    }, actor(req));
 
     // 2. Mark Question as Promoted
-    const updated = db.promoteToFaq(id, sectionId, faq.id, actorEmail || "admin@truefootage.tech");
+    const updated = db.promoteToFaq(id, sectionId, faq.id, actor(req));
     res.json({ question: updated, faq });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -274,20 +294,20 @@ app.get("/api/annotations", (req, res) => {
 });
 
 app.post("/api/annotations", (req, res) => {
-  const { resourceId, text, userId, userEmail, userName } = req.body;
-  if (!resourceId || !text || !userEmail) {
+  const { resourceId, text } = req.body;
+  const user = (req as any).authUser;
+  if (!resourceId || !text) {
     return res.status(400).json({ error: "Missing required annotation fields" });
   }
-  const annotation = db.addAnnotation(resourceId, text, userId || `usr-${Date.now()}`, userEmail, userName || "Staff Appraiser");
+  const annotation = db.addAnnotation(resourceId, text, user.uid, user.email, user.displayName || "Staff Appraiser");
   res.status(201).json({ annotation });
 });
 
 app.delete("/api/annotations/:id", (req, res) => {
   const { id } = req.params;
-  const { userEmail, isAdmin } = req.body;
-  if (!userEmail) return res.status(400).json({ error: "User email is required to delete annotation" });
+  const user = (req as any).authUser;
   try {
-    db.deleteAnnotation(id, userEmail, !!isAdmin);
+    db.deleteAnnotation(id, user.email, user.role === "admin");
     res.json({ success: true });
   } catch (error: any) {
     res.status(403).json({ error: error.message });
@@ -299,12 +319,22 @@ app.get("/api/config", (req, res) => {
   res.json({ config: db.getConfig() });
 });
 
-app.put("/api/config", (req, res) => {
-  const { driveFolderId, driveFolderName, notebookLmUrl, actorEmail } = req.body;
+app.put("/api/config", requireAdmin, (req, res) => {
+  const { driveFolderId, driveFolderName, notebookLmUrl } = req.body;
   if (!driveFolderId || !driveFolderName || !notebookLmUrl) {
     return res.status(400).json({ error: "Missing config parameters" });
   }
-  const config = db.updateConfig({ driveFolderId, driveFolderName, notebookLmUrl }, actorEmail || "admin@truefootage.tech");
+  const config = db.updateConfig({ driveFolderId, driveFolderName, notebookLmUrl }, actor(req));
+  res.json({ config });
+});
+
+// Record the linked Google Sheet (FAQ + TFAN log export, #8).
+app.put("/api/config/log-sheet", requireAdmin, (req, res) => {
+  const { logSheetId, logSheetUrl } = req.body;
+  if (!logSheetId || !logSheetUrl) {
+    return res.status(400).json({ error: "logSheetId and logSheetUrl are required" });
+  }
+  const config = db.setLogSheet(logSheetId, logSheetUrl, actor(req));
   res.json({ config });
 });
 
@@ -313,81 +343,77 @@ app.get("/api/curriculum/modules", (req, res) => {
   res.json({ modules: db.getModules() });
 });
 
-app.post("/api/curriculum/modules", (req, res) => {
-  const { name, description, actorEmail } = req.body;
+app.post("/api/curriculum/modules", requireAdmin, (req, res) => {
+  const { name, description } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: "Section name is required" });
   }
   try {
-    const modules = db.createModule(name.trim(), description?.trim() || '', actorEmail || "admin@truefootage.tech");
+    const modules = db.createModule(name.trim(), description?.trim() || '', actor(req));
     res.status(201).json({ modules });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }
 });
 
-app.put("/api/curriculum/modules/reorder", (req, res) => {
-  const { modules, actorEmail } = req.body;
+app.put("/api/curriculum/modules/reorder", requireAdmin, (req, res) => {
+  const { modules } = req.body;
   if (!modules || !Array.isArray(modules)) {
     return res.status(400).json({ error: "Modules list array is required" });
   }
-  const updated = db.reorderModules(modules, actorEmail || "admin@truefootage.tech");
+  const updated = db.reorderModules(modules, actor(req));
   res.json({ modules: updated });
 });
 
-app.put("/api/curriculum/modules/rename", (req, res) => {
-  const { oldName, newName, description, actorEmail } = req.body;
+app.put("/api/curriculum/modules/rename", requireAdmin, (req, res) => {
+  const { oldName, newName, description } = req.body;
   if (!oldName) {
     return res.status(400).json({ error: "Old section name is required" });
   }
   const nameToUse = (newName && newName.trim()) ? newName.trim() : oldName;
   try {
-    const updated = db.updateModule(oldName, nameToUse, description, actorEmail || "admin@truefootage.tech");
+    const updated = db.updateModule(oldName, nameToUse, description, actor(req));
     res.json({ modules: updated });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }
 });
 
-app.delete("/api/curriculum/modules", (req, res) => {
-  const { name, actorEmail } = req.body;
+app.delete("/api/curriculum/modules", requireAdmin, (req, res) => {
+  const { name } = req.body;
   if (!name) {
     return res.status(400).json({ error: "Section name is required to delete" });
   }
   try {
-    const updated = db.deleteModule(name, actorEmail || "admin@truefootage.tech");
+    const updated = db.deleteModule(name, actor(req));
     res.json({ modules: updated });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }
 });
 
-// Resources Reordering Endpoints
-app.put("/api/resources/reorder", (req, res) => {
-  const { orders, actorEmail } = req.body; // Array of { id, order }
-  if (!orders || !Array.isArray(orders)) {
-    return res.status(400).json({ error: "Orders array is required" });
-  }
-  const resources = db.updateResourcesOrder(orders, actorEmail || "admin@truefootage.tech");
-  res.json({ resources });
-});
-
-// Audit Logs
-app.get("/api/audit-logs", (req, res) => {
+// Audit Logs (admin only)
+app.get("/api/audit-logs", requireAdmin, (req, res) => {
   res.json({ logs: db.getAuditLogs() });
 });
 
-// Simulated Drive Changes API Webhook
-// Admins can trigger this endpoint in-app to test how files uploaded directly to
-// Google Drive folders dynamically propagate to Firestore without manual refreshes!
-app.post("/api/sync/drive-trigger", (req, res) => {
-  const { action, title, fileType, moduleTag, actorEmail } = req.body;
-  
+// TFAN chat logs (admin only, issue #7)
+app.get("/api/admin/chat-logs", requireAdmin, (req, res) => {
+  res.json({ logs: db.getChatLogs() });
+});
+
+// Simulated Drive Changes API Webhook (admin only).
+// NOTE: this is a manual "add a placeholder record" sandbox. The real,
+// intuitive path is the live "Sync from Google Drive" action in the Admin
+// console, which reads the actual Drive folder via the signed-in admin's
+// Google token. This endpoint is kept for offline testing/demos.
+app.post("/api/sync/drive-trigger", requireAdmin, (req, res) => {
+  const { action, title, fileType, moduleTag } = req.body;
+  const email = actor(req);
+
   if (!action || !title) {
     return res.status(400).json({ error: "Action and file title are required for simulated webhook" });
   }
-
-  const email = actorEmail || "drive-changes-api@system.gserviceaccount.com";
 
   if (action === "create" || action === "update") {
     const matchedType = fileType || "doc";
@@ -403,7 +429,7 @@ app.post("/api/sync/drive-trigger", (req, res) => {
         lastSyncedRevisionId: `rev-hook-${Math.floor(Math.random() * 900 + 100)}`
       }, email);
       res.json({
-        message: `Webhook received: Google Drive updated existing file '${title}'.`,
+        message: `Simulated: Google Drive updated existing file '${title}'.`,
         resource: updated
       });
     } else {
@@ -412,7 +438,7 @@ app.post("/api/sync/drive-trigger", (req, res) => {
         title: `${title}.${ext}`,
         resourceType: matchedType,
         moduleTags: tags,
-        description: `This file was pushed directly into Google Drive. The Drive Changes API webhook immediately detected the file addition and registered this record.`,
+        description: `Placeholder record added via the Drive sync sandbox for testing. Use the live "Sync from Google Drive" action to index real files.`,
         lastSyncedRevisionId: "rev-hook-100",
         driveLastModified: new Date().toISOString(),
         publishStatus: "published",
@@ -420,7 +446,7 @@ app.post("/api/sync/drive-trigger", (req, res) => {
         size: "240 KB"
       }, email);
       res.json({
-        message: `Webhook received: Google Drive detected new file '${title}.${ext}'. Indexing complete.`,
+        message: `Simulated: registered placeholder '${title}.${ext}'.`,
         resource: created
       });
     }
@@ -431,21 +457,81 @@ app.post("/api/sync/drive-trigger", (req, res) => {
     }
     db.deleteResource(existing.id, email);
     res.json({
-      message: `Webhook received: Google Drive detected file '${existing.title}' was deleted. De-indexing complete.`
+      message: `Simulated: removed record '${existing.title}'.`
     });
   } else {
     res.status(400).json({ error: "Invalid webhook action (must be 'create', 'update', or 'delete')" });
   }
 });
 
+// Bulk upsert resources discovered by a live Google Drive folder scan (#3, #5).
+// The client lists the folder via the Drive API using the admin's Google token,
+// then posts the discovered files here to index/refresh them. Matching is by
+// driveFileId so re-syncs update in place and reflect source changes.
+app.post("/api/sync/drive-index", requireAdmin, (req, res) => {
+  const { files } = req.body as { files: any[] };
+  if (!Array.isArray(files)) {
+    return res.status(400).json({ error: "files array is required" });
+  }
+  const email = actor(req);
+  let created = 0;
+  let updated = 0;
+
+  for (const f of files) {
+    if (!f || !f.driveFileId || !f.title) continue;
+    const existing = db.getResource(f.driveFileId);
+    const payload = {
+      driveFileId: f.driveFileId,
+      title: f.title,
+      resourceType: f.resourceType || "doc",
+      moduleTags: Array.isArray(f.moduleTags) && f.moduleTags.length ? f.moduleTags : ["UAD 3.6 General Overview"],
+      description: f.description,
+      driveLastModified: f.driveLastModified || new Date().toISOString(),
+      publishStatus: "published" as const,
+      webViewLink: f.webViewLink,
+      size: f.size,
+      lastSyncedRevisionId: f.lastSyncedRevisionId || `rev-${Date.now()}`
+    };
+    if (existing) {
+      db.updateResource(existing.id, payload, email);
+      updated++;
+    } else {
+      db.createResource(payload, email);
+      created++;
+    }
+  }
+
+  res.json({ message: `Drive sync complete: ${created} added, ${updated} updated.`, created, updated, resources: db.getResources() });
+});
+
 // NotebookLM Q&A Proxy Endpoint
 // Queries Gemini with NotebookLM master knowledge base first, then optionally correlates with targeted section docs!
 app.post("/api/notebooklm/query", async (req, res) => {
   const { moduleId, question, chatHistory, includeSectionDocs = true, activeSources } = req.body;
+  const user = (req as any).authUser;
 
   if (!question) {
     return res.status(400).json({ error: "Question is required" });
   }
+
+  // Log every TFAN chat entry for admin review (#7). The linked section is
+  // recorded only when the user opted to include section context; otherwise
+  // it is marked "General".
+  const logChat = (answerText?: string) => {
+    try {
+      db.addChatLog({
+        question,
+        userId: user.uid,
+        userEmail: user.email,
+        userName: user.displayName || user.email,
+        section: moduleId || "General",
+        includeSection: !!(includeSectionDocs && moduleId),
+        answerPreview: answerText ? String(answerText).slice(0, 500) : undefined
+      });
+    } catch (e) {
+      console.error("[chat-log] failed to record TFAN entry:", e);
+    }
+  };
 
   // 1. Gather section resources & FAQs if section correlation is requested
   const sectionResources = (includeSectionDocs && moduleId)
@@ -465,7 +551,7 @@ PRIMARY KNOWLEDGE SOURCES (NotebookLM Master Vault):
 
   if (activeSources && Array.isArray(activeSources) && activeSources.length > 0) {
     contextText += `\nACTIVE SELECTED TFAN MASTER SOURCES (${activeSources.length} sources enabled):\n`;
-    activeSources.slice(0, 15).forEach((src, idx) => {
+    activeSources.slice(0, 15).forEach((src: string) => {
       contextText += `• ${src}\n`;
     });
     if (activeSources.length > 15) {
@@ -509,16 +595,16 @@ RESPONSE GUIDELINES:
   // Try to use Gemini client
   if (ai) {
     try {
-      const messages = [];
+      const messages: any[] = [];
       if (chatHistory && Array.isArray(chatHistory)) {
-        chatHistory.forEach(msg => {
+        chatHistory.forEach((msg: any) => {
           messages.push({
             role: msg.role === "user" ? "user" : "model",
             parts: [{ text: msg.content }]
           });
         });
       }
-      
+
       messages.push({
         role: "user",
         parts: [{ text: `${contextText}\n\nUser Question: ${question}` }]
@@ -533,6 +619,7 @@ RESPONSE GUIDELINES:
       });
 
       const answerText = response.text || "No response generated by the model.";
+      logChat(answerText);
 
       // Extract citations dynamically
       const citations: any[] = [
@@ -567,27 +654,26 @@ RESPONSE GUIDELINES:
     }
   } else {
     // Elegant fallback simulation if GEMINI_API_KEY is not defined yet
-    setTimeout(() => {
-      const mainCitation = {
-        resourceId: "notebooklm-master",
-        title: "NotebookLM Master Vault (GSE / USPAP / Textbooks)",
-        isMaster: true
-      };
+    const mainCitation = {
+      resourceId: "notebooklm-master",
+      title: "NotebookLM Master Vault (GSE / USPAP / Textbooks)",
+      isMaster: true
+    };
 
-      const citationsList = [mainCitation];
-      let correlatedNote = "";
+    const citationsList: any[] = [mainCitation];
+    let correlatedNote = "";
 
-      if (includeSectionDocs && sectionResources.length > 0) {
-        const doc = sectionResources[0];
-        citationsList.push({
-          resourceId: doc.id,
-          title: doc.title,
-          isMaster: false
-        });
-        correlatedNote = `\n\n*Correlated Section Reference:* **${doc.title}** (${moduleId} Wiki)`;
-      }
+    if (includeSectionDocs && sectionResources.length > 0) {
+      const doc = sectionResources[0];
+      citationsList.push({
+        resourceId: doc.id,
+        title: doc.title,
+        isMaster: false
+      });
+      correlatedNote = `\n\n*Correlated Section Reference:* **${doc.title}** (${moduleId} Wiki)`;
+    }
 
-      const simulatedAnswer = `**[TFAN AI Q&A - NotebookLM Grounded Response]**
+    const simulatedAnswer = `**[TFAN AI Q&A - NotebookLM Grounded Response]**
 
 Based on the **NotebookLM Master Vault** (Fannie Mae/Freddie Mac GSE UAD 3.6 Specs, USPAP 2024-2025, and Valuation Textbooks):
 1. **Core Specification**: Under standard UAD 3.6 requirements, fields require discrete, structured field entries rather than free-form commentary.
@@ -596,11 +682,12 @@ Based on the **NotebookLM Master Vault** (Fannie Mae/Freddie Mac GSE UAD 3.6 Spe
 
 *To activate live Gemini AI generation, add your GEMINI_API_KEY in Settings > Secrets.*`;
 
-      res.json({
-        answer: simulatedAnswer,
-        citations: citationsList
-      });
-    }, 600);
+    logChat(simulatedAnswer);
+
+    res.json({
+      answer: simulatedAnswer,
+      citations: citationsList
+    });
   }
 });
 
@@ -608,6 +695,10 @@ Based on the **NotebookLM Master Vault** (Fannie Mae/Freddie Mac GSE UAD 3.6 Spe
 // VITE OR STATIC FILE HANDLER MIDDLEWARE
 // -------------------------------------------------------------
 async function bootstrap() {
+  // Load the data store (Firestore in prod, local file fallback in dev)
+  // before serving any requests.
+  await db.init();
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -626,6 +717,7 @@ async function bootstrap() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`UAD 3.6 Knowledge Wiki server running on http://localhost:${PORT}`);
+    console.log(`Auth: domain=@${ALLOWED_DOMAIN}, DEV_AUTH=${DEV_AUTH ? "ON (dev only)" : "off"}`);
   });
 }
 

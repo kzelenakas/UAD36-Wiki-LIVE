@@ -45,19 +45,25 @@ deploys to Cloud Run. Override `_LOCATION`, `_SERVICE_NAME`, `_AR_REPO`, or
 `_ALLOWED_DOMAIN` via `--substitutions` if your project differs from the
 defaults.
 
-## Known limitations — read before relying on this in production
+## Security & persistence (production)
 
-- **Storage is not persistent on Cloud Run.** `server/db.ts` reads/writes a
-  local `data-store.json` file. Cloud Run containers are stateless and can
-  scale to zero or to multiple replicas that don't share a filesystem — data
-  written by one request is not guaranteed to be there for the next one.
-  `firebase` is already a dependency; migrating the data layer to Firestore
-  is the natural fix and isn't done yet.
-- **`/api/auth/login` does not verify identity.** The client-side Firebase
-  Google sign-in (`src/lib/googleDocsExport.ts`) is only used to get an
-  OAuth access token for Drive/Docs API calls. The role-granting login route
-  in `server.ts` trusts whatever `email`/`displayName` the client POSTs — it
-  does not check a Firebase ID token, so anyone can claim
-  `admin@truefootage.tech` and receive `role: "admin"` in the response.
-  Fix this (verify the Firebase ID token server-side with
-  `getAuth().verifyIdToken()`) before this handles anything sensitive.
+Both of the earlier blockers are resolved. See
+[`docs/DEPLOYMENT_RUNBOOK.md`](docs/DEPLOYMENT_RUNBOOK.md) for the required
+one-time Google Cloud / Firebase console steps.
+
+- **Identity is verified server-side.** Login uses real Firebase Google
+  sign-in; the server verifies the Firebase **ID token**
+  (`server/auth.ts`), enforces the `@truefootage.tech` domain, and grants
+  admin only to the `ADMIN_EMAILS` allowlist. Every `/api` route requires a
+  valid token; admin routes require an allowlisted admin. The old
+  "type any email / any `admin@…` = admin" behavior is removed.
+- **Storage is durable.** `server/db.ts` persists through `server/storage.ts`
+  to **Firestore** (auto-detected on Cloud Run), with a local `data-store.json`
+  fallback for dev. Grant the Cloud Run runtime service account the
+  **Cloud Datastore User** role (see runbook §3).
+
+### Local dev without Google
+
+Set `DEV_AUTH=true` and `STORAGE_BACKEND=file` in `.env.local` to run entirely
+offline (a dev login button appears, and data uses the local JSON file).
+`DEV_AUTH` must never be set in production.

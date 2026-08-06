@@ -50,9 +50,11 @@ steps:
       - '4'
       - '--timeout'
       - '60'
-      # Restores Drive connection and removes Gemini Key
+      # App-level auth (real Google Workspace SSO) is the security gate.
+      # The runtime service account must have the "Cloud Datastore User" role
+      # for Firestore persistence (see docs/DEPLOYMENT_RUNBOOK.md).
       - '--set-env-vars'
-      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F'
+      - 'ALLOWED_DOMAIN=${_ALLOWED_DOMAIN},DRIVE_FOLDER_ID=${_DRIVE_FOLDER_ID},ADMIN_EMAILS=${_ADMIN_EMAILS},FIREBASE_PROJECT_ID=${_FIREBASE_PROJECT_ID}'
 
 substitutions:
   _REPO_NAME: 'uad36-wiki'
@@ -60,6 +62,10 @@ substitutions:
   _LOCATION: 'us-central1'
   _AR_REPO: 'uad36-wiki-repo'
   _ALLOWED_DOMAIN: 'truefootage.tech'
+  _DRIVE_FOLDER_ID: '1E7_DywyR2785lgZCNs8ZfvYmFi10r-6F'
+  _ADMIN_EMAILS: 'kevin.zelenakas@truefootage.tech'
+  # Must be the Firebase project that issues the sign-in ID tokens.
+  _FIREBASE_PROJECT_ID: 'uad-36-knowledge-base'
 
 images:
   - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_REPO_NAME}:$COMMIT_SHA'

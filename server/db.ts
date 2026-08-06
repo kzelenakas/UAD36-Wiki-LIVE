@@ -1,8 +1,5 @@
-import fs from 'fs';
-import path from 'path';
-import { Resource, FAQSection, FAQEntry, SubmittedQuestion, ResourceAnnotation, AuditLog, WikiSection, DEFAULT_WIKI_SECTIONS } from '../src/types';
-
-const STORE_PATH = path.join(process.cwd(), 'data-store.json');
+import { Resource, FAQSection, FAQEntry, SubmittedQuestion, ResourceAnnotation, AuditLog, WikiSection, TfanChatLog, SystemConfig, DEFAULT_WIKI_SECTIONS } from '../src/types';
+import { initStorage, loadStore, saveStore, activeBackend } from './storage';
 
 interface DataStore {
   resources: Resource[];
@@ -11,13 +8,16 @@ interface DataStore {
   submittedQuestions: SubmittedQuestion[];
   annotations: ResourceAnnotation[];
   auditLogs: AuditLog[];
+  chatLogs: TfanChatLog[];
   modules?: (WikiSection | string)[];
-  config?: {
-    driveFolderId: string;
-    driveFolderName: string;
-    notebookLmUrl: string;
-  };
+  config?: SystemConfig;
 }
+
+const DEFAULT_CONFIG: SystemConfig = {
+  driveFolderId: process.env.DRIVE_FOLDER_ID || "1tf-UAD_36_Wiki_Resources_Placeholder_ID",
+  driveFolderName: "UAD 3.6 Wiki Resources",
+  notebookLmUrl: "https://notebooklm.google.com/notebook/12345-67890-abcdef"
+};
 
 const DEFAULT_SECTIONS: FAQSection[] = [
   {
@@ -185,6 +185,10 @@ const DEFAULT_RESOURCES: Resource[] = [
 
 class Database {
   private data: DataStore;
+  private ready = false;
+  // Serialise persistence so concurrent writes never clobber each other
+  // (the store is written as a single document).
+  private persistQueue: Promise<void> = Promise.resolve();
 
   constructor() {
     this.data = {
@@ -193,70 +197,92 @@ class Database {
       faqEntries: [],
       submittedQuestions: [],
       annotations: [],
-      auditLogs: []
+      auditLogs: [],
+      chatLogs: []
     };
-    this.load();
   }
 
-  private load() {
-    try {
-      if (fs.existsSync(STORE_PATH)) {
-        const fileContent = fs.readFileSync(STORE_PATH, 'utf-8');
-        this.data = JSON.parse(fileContent);
-        let updated = false;
-        if (!this.data.modules || this.data.modules.length === 0) {
-          this.data.modules = DEFAULT_WIKI_SECTIONS;
-          updated = true;
-        }
-        if (!this.data.config) {
-          this.data.config = {
-            driveFolderId: "1tf-UAD_36_Wiki_Resources_Placeholder_ID",
-            driveFolderName: "UAD 3.6 Wiki Resources",
-            notebookLmUrl: "https://notebooklm.google.com/notebook/12345-67890-abcdef"
-          };
-          updated = true;
-        }
-        if (updated) {
-          this.save();
-        }
-      } else {
-        // Initialize default seed data
-        this.data = {
-          resources: DEFAULT_RESOURCES,
-          faqSections: DEFAULT_SECTIONS,
-          faqEntries: DEFAULT_FAQS,
-          submittedQuestions: [],
-          annotations: [],
-          auditLogs: [
-            {
-              id: 'log-1',
-              actorEmail: 'system@truefootage.tech',
-              action: 'SEED_DATABASE',
-              targetType: 'taxonomy',
-              targetId: 'system',
-              timestamp: new Date().toISOString()
-            }
-          ],
-          modules: DEFAULT_WIKI_SECTIONS,
-          config: {
-            driveFolderId: "1tf-UAD_36_Wiki_Resources_Placeholder_ID",
-            driveFolderName: "UAD 3.6 Wiki Resources",
-            notebookLmUrl: "https://notebooklm.google.com/notebook/12345-67890-abcdef"
-          }
-        };
-        this.save();
+  /**
+   * Loads the data store from the active backend (Firestore or local file)
+   * into memory. Must be awaited once at server bootstrap before serving
+   * requests. Reads then operate on the in-memory copy (fast, synchronous)
+   * and writes are mirrored back to the backend in the background.
+   */
+  async init() {
+    if (this.ready) return;
+    await initStorage();
+
+    const loaded = await loadStore();
+    if (loaded && loaded.resources) {
+      this.data = {
+        resources: loaded.resources || [],
+        faqSections: loaded.faqSections || [],
+        faqEntries: loaded.faqEntries || [],
+        submittedQuestions: loaded.submittedQuestions || [],
+        annotations: loaded.annotations || [],
+        auditLogs: loaded.auditLogs || [],
+        chatLogs: loaded.chatLogs || [],
+        modules: loaded.modules,
+        config: loaded.config
+      };
+      let updated = false;
+      if (!this.data.modules || this.data.modules.length === 0) {
+        this.data.modules = DEFAULT_WIKI_SECTIONS;
+        updated = true;
       }
-    } catch (e) {
-      console.error('Error loading data store:', e);
+      if (!this.data.config) {
+        this.data.config = { ...DEFAULT_CONFIG };
+        updated = true;
+      }
+      if (!this.data.chatLogs) {
+        this.data.chatLogs = [];
+        updated = true;
+      }
+      if (updated) this.persist();
+    } else {
+      // Initialize default seed data on first run
+      this.data = {
+        resources: DEFAULT_RESOURCES,
+        faqSections: DEFAULT_SECTIONS,
+        faqEntries: DEFAULT_FAQS,
+        submittedQuestions: [],
+        annotations: [],
+        chatLogs: [],
+        auditLogs: [
+          {
+            id: 'log-1',
+            actorEmail: 'system@truefootage.tech',
+            action: 'SEED_DATABASE',
+            targetType: 'taxonomy',
+            targetId: 'system',
+            timestamp: new Date().toISOString()
+          }
+        ],
+        modules: DEFAULT_WIKI_SECTIONS,
+        config: { ...DEFAULT_CONFIG }
+      };
+      this.persist();
     }
+    this.ready = true;
+    console.log(`[db] Initialised (${activeBackend()} backend, ${this.data.resources.length} resources).`);
   }
 
+  /**
+   * Persist the current in-memory store to the backend. Serialised through a
+   * promise queue so overlapping writes apply in order. Errors are logged;
+   * the in-memory copy remains the source of truth for the running instance.
+   */
+  private persist() {
+    const snapshot = JSON.parse(JSON.stringify(this.data));
+    this.persistQueue = this.persistQueue
+      .then(() => saveStore(snapshot))
+      .catch((e) => console.error('[db] Persist failed:', e));
+    return this.persistQueue;
+  }
+
+  /** Back-compat alias — existing methods call this.save(). */
   private save() {
-    try {
-      fs.writeFileSync(STORE_PATH, JSON.stringify(this.data, null, 2), 'utf-8');
-    } catch (e) {
-      console.error('Error saving data store:', e);
-    }
+    this.persist();
   }
 
   // Resources
@@ -384,23 +410,68 @@ class Database {
   }
 
   // Configuration
-  getConfig() {
+  getConfig(): SystemConfig {
     if (!this.data.config) {
-      this.data.config = {
-        driveFolderId: "1tf-UAD_36_Wiki_Resources_Placeholder_ID",
-        driveFolderName: "UAD 3.6 Wiki Resources",
-        notebookLmUrl: "https://notebooklm.google.com/notebook/12345-67890-abcdef"
-      };
+      this.data.config = { ...DEFAULT_CONFIG };
     }
     return this.data.config;
   }
 
   updateConfig(config: { driveFolderId: string, driveFolderName: string, notebookLmUrl: string }, actorEmail: string) {
     const oldVal = JSON.stringify(this.data.config);
-    this.data.config = config;
-    this.addAuditLog(actorEmail, 'UPDATE_CONFIG', 'taxonomy', 'system-config', oldVal, JSON.stringify(config));
+    // Preserve linked-sheet fields that aren't part of the editable config form.
+    this.data.config = { ...this.getConfig(), ...config };
+    this.addAuditLog(actorEmail, 'UPDATE_CONFIG', 'taxonomy', 'system-config', oldVal, JSON.stringify(this.data.config));
     this.save();
     return this.data.config;
+  }
+
+  /** Record the linked Google Sheet (FAQ + TFAN log export, #8). */
+  setLogSheet(logSheetId: string, logSheetUrl: string, actorEmail: string) {
+    const cfg = this.getConfig();
+    cfg.logSheetId = logSheetId;
+    cfg.logSheetUrl = logSheetUrl;
+    cfg.logSheetUpdatedAt = new Date().toISOString();
+    this.data.config = cfg;
+    this.addAuditLog(actorEmail, 'SET_LOG_SHEET', 'taxonomy', 'system-config', undefined, logSheetUrl);
+    this.save();
+    return cfg;
+  }
+
+  // TFAN Chat Logs (#7)
+  getChatLogs(): TfanChatLog[] {
+    return [...this.data.chatLogs].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+  }
+
+  addChatLog(entry: {
+    question: string;
+    userId: string;
+    userEmail: string;
+    userName: string;
+    section: string;
+    includeSection: boolean;
+    answerPreview?: string;
+  }): TfanChatLog {
+    const log: TfanChatLog = {
+      id: `chat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      userId: entry.userId,
+      userEmail: entry.userEmail,
+      userName: entry.userName,
+      question: entry.question,
+      section: entry.includeSection && entry.section ? entry.section : 'General',
+      includeSection: entry.includeSection,
+      answerPreview: entry.answerPreview,
+      timestamp: new Date().toISOString()
+    };
+    this.data.chatLogs.push(log);
+    // Keep the log bounded (retain most recent 5000 entries).
+    if (this.data.chatLogs.length > 5000) {
+      this.data.chatLogs.splice(0, this.data.chatLogs.length - 5000);
+    }
+    this.save();
+    return log;
   }
 
   getResource(id: string) {

@@ -1,6 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { Resource, ResourceAnnotation, FAQEntry, UserProfile } from '../types';
-import { FileText, Calendar, Cloud, Bookmark, BookmarkCheck, ArrowLeft, MessageSquare, History, Plus, AlertCircle, Trash2, Eye, ShieldCheck, Share2 } from 'lucide-react';
+import { FileText, Calendar, Cloud, Bookmark, BookmarkCheck, ArrowLeft, MessageSquare, History, Plus, AlertCircle, Trash2, Eye, ShieldCheck, Share2, Download } from 'lucide-react';
+import { driveEmbedUrl, driveDownloadUrl } from '../lib/driveSync';
+
+// A real Google Drive file id (vs. a local placeholder like "drive-res-1").
+function isRealDriveId(id?: string): boolean {
+  if (!id) return false;
+  return /^[A-Za-z0-9_-]{20,}$/.test(id) && !id.startsWith('drive-') && !id.startsWith('res-');
+}
+
+// The correct embeddable URL. Real Drive files use the /preview endpoint
+// (the /edit URL Google refuses to embed); pasted links are coerced to
+// /preview when possible so they actually render.
+function computeEmbedUrl(resource: Resource): string {
+  if (isRealDriveId(resource.driveFileId)) {
+    return driveEmbedUrl(resource.driveFileId, resource.resourceType);
+  }
+  const link = resource.webViewLink || '';
+  return link.replace(/\/edit(\?[^#]*)?(#.*)?$/, '/preview');
+}
+
+function computeDownloadUrl(resource: Resource): string {
+  if (isRealDriveId(resource.driveFileId)) return driveDownloadUrl(resource.driveFileId);
+  return resource.webViewLink || '';
+}
 
 interface ResourceViewerProps {
   resource: Resource;
@@ -276,12 +299,13 @@ export default function ResourceViewer({
                     // Google Doc/Sheet/Slide or general PDF embed
                     <div className="w-full h-full flex flex-col">
                       <iframe
-                        src={resource.webViewLink}
+                        src={computeEmbedUrl(resource)}
                         title={resource.title}
                         className="w-full flex-1 border-0 bg-white"
+                        sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads"
                       />
                       <div className="bg-slate-950 px-4 py-2 text-slate-400 text-[11px] flex items-center justify-between">
-                        <span>Embedding official Workspace document in live edit format.</span>
+                        <span>Embedding the live Google Drive document (read-only preview).</span>
                         <a
                           href={resource.webViewLink}
                           target="_blank"
@@ -497,6 +521,15 @@ export default function ResourceViewer({
                 className="w-full text-center bg-emerald-800 hover:bg-emerald-700 text-white py-2 px-3 text-xs font-semibold rounded-xl block transition cursor-pointer"
               >
                 Open Google Drive ↗
+              </a>
+              <a
+                href={computeDownloadUrl(resource)}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full text-center bg-emerald-700 hover:bg-emerald-600 text-white py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download File
               </a>
               <button
                 onClick={() => {
