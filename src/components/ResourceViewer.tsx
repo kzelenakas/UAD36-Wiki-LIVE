@@ -23,10 +23,31 @@ function extractDriveId(resource: Resource): string | null {
 // The correct embeddable URL. Real Drive files use the /preview endpoint
 // (Google refuses to embed the /edit and /view forms). Non-Drive links are
 // coerced to /preview when possible so they actually render.
+// For a pasted Google link, the source URL itself tells us the real product
+// (Docs/Sheets/Slides) — more reliable than the admin-picked resourceType, which
+// is often mislabeled on manually-linked resources.
+function embedFromGoogleLink(link: string, id: string): string | null {
+  if (/docs\.google\.com\/document\//.test(link)) return `https://docs.google.com/document/d/${id}/preview`;
+  if (/docs\.google\.com\/spreadsheets\//.test(link)) return `https://docs.google.com/spreadsheets/d/${id}/preview`;
+  if (/docs\.google\.com\/presentation\//.test(link)) return `https://docs.google.com/presentation/d/${id}/embed`;
+  // A drive.google.com link means an UPLOADED file (Word/PDF/etc.) — not a
+  // native Google Doc — so it must use the universal Drive viewer. Sending
+  // these to docs.google.com/document/.../preview 404s. This viewer also
+  // renders native Docs/Sheets/Slides, so it's the safe default for any
+  // drive.google.com link regardless of the picked resourceType.
+  if (/drive\.google\.com\//.test(link)) return `https://drive.google.com/file/d/${id}/preview`;
+  return null;
+}
+
 function computeEmbedUrl(resource: Resource): string {
+  const link = resource.webViewLink || '';
   const id = extractDriveId(resource);
-  if (id) return driveEmbedUrl(id, resource.resourceType);
-  return (resource.webViewLink || '').replace(/\/(edit|view)(\?[^#]*)?(#.*)?$/, '/preview');
+  if (id) {
+    // Prefer the product inferred from the link; fall back to resourceType.
+    return embedFromGoogleLink(link, id) || driveEmbedUrl(id, resource.resourceType);
+  }
+  // No id parsed — best effort: coerce an /edit|/view|/preview link to /preview.
+  return link.replace(/\/(edit|view|preview)(\?[^#]*)?(#.*)?$/, '/preview');
 }
 
 function computeDownloadUrl(resource: Resource): string {
