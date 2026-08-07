@@ -1,0 +1,16 @@
+# Canonical line endings for the repo: LF everywhere, on every OS.
+# Prevents the "every file shows as modified" CRLF churn on Windows checkouts.
+* text=auto eol=lf
+
+# Shell scripts must stay LF regardless of platform.
+*.sh text eol=lf
+
+# Treat known binaries as binary (never touch their bytes / line endings).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.woff  binary
+*.woff2 binary
