@@ -52,7 +52,10 @@ function computeEmbedUrl(resource: Resource): string {
 
 function computeDownloadUrl(resource: Resource): string {
   const id = extractDriveId(resource);
-  if (id) return driveDownloadUrl(id);
+  // Pass resourceType AND webViewLink so native Google files resolve to their
+  // `export` endpoint instead of the binary-only `uc?export=download` (which
+  // silently fails for Docs/Sheets/Slides even when sharing is correct).
+  if (id) return driveDownloadUrl(id, resource.resourceType, resource.webViewLink);
   return resource.webViewLink || '';
 }
 

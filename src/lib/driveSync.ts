@@ -140,8 +140,40 @@ export function driveEmbedUrl(driveFileId: string, resourceType: string): string
   return `https://drive.google.com/file/d/${driveFileId}/preview`;
 }
 
-/** Direct download URL for a Drive-hosted binary file. */
-export function driveDownloadUrl(driveFileId: string): string {
+/**
+ * Download URL for a Drive resource.
+ *
+ * Native Google files (Docs/Sheets/Slides) have NO binary blob, so the
+ * `uc?export=download` endpoint dead-ends for them regardless of sharing —
+ * they must use the product-specific `export` endpoint (Doc/Slide -> PDF,
+ * Sheet -> XLSX). Only genuinely uploaded binaries (PDF/image/video/other)
+ * use `uc?export=download`.
+ *
+ * The product is inferred from `webViewLink` first — the source link is the
+ * most reliable signal, since `resourceType` is frequently mislabeled on
+ * manually-linked resources — then falls back to `resourceType`. A
+ * `drive.google.com/file/` link always means an uploaded binary and is sent
+ * to `uc?export=download` even if resourceType claims otherwise (mirrors the
+ * embed logic in embedFromGoogleLink).
+ */
+export function driveDownloadUrl(
+  driveFileId: string,
+  resourceType?: string,
+  webViewLink?: string
+): string {
+  const link = (webViewLink || '').toLowerCase();
+  const t = (resourceType || '').toLowerCase();
+
+  // An uploaded binary (drive.google.com/file/...) never has an `export` form.
+  const isUploadedBinaryLink = /drive\.google\.com\/file\//.test(link);
+  if (!isUploadedBinaryLink) {
+    if (/docs\.google\.com\/document\//.test(link) || t === 'doc' || t === 'document')
+      return `https://docs.google.com/document/d/${driveFileId}/export?format=pdf`;
+    if (/docs\.google\.com\/spreadsheets\//.test(link) || t === 'sheet' || t === 'spreadsheet')
+      return `https://docs.google.com/spreadsheets/d/${driveFileId}/export?format=xlsx`;
+    if (/docs\.google\.com\/presentation\//.test(link) || t === 'slide' || t === 'presentation')
+      return `https://docs.google.com/presentation/d/${driveFileId}/export/pdf`;
+  }
   return `https://drive.google.com/uc?export=download&id=${driveFileId}`;
 }
 
